@@ -1,0 +1,26 @@
+{
+  "name": "webidl-napi",
+  "version": "0.0.0",
+  "description": "WebIDL to N-API compiler",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nodejs/webidl-napi.git"
+  },
+  "keywords": [
+    "n-api",
+    "webidl"
+  ],
+  "author": "Gabriel Schulhof <gabriel.schulhof@intel.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/nodejs/webidl-napi/issues"
+  },
+  "homepage": "https://github.com/nodejs/webidl-napi#readme",
+  "dependencies": {
+    "webidl2": "^23.13.0"
+  }
+}
