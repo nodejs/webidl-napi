@@ -1,13 +1,27 @@
 'use strict';
+const argv = require('yargs')
+  .nargs('o', 1)
+  .describe('o', 'output file')
+  .help('h')
+  .alias('h', 'help')
+  .describe('I', 'print include directory and exit')
+  .describe('i', 'add #include after js_native_api.h')
+  .nargs('i', 1)
+  .argv;
+
+if (argv.I) {
+  console.log(__dirname);
+  process.exit(0);
+}
 
 const { parse } = require('webidl2');
 const fs = require('fs');
 const path = require('path');
 
-const file = fs.readFileSync(process.argv[2], {encoding: 'utf-8'});
+const file = fs.readFileSync(argv._[0], {encoding: 'utf-8'});
 const tree = parse(file);
-const parsedPath = path.parse(process.argv[2]);
-const output = parsedPath.name + '.cc';
+const parsedPath = path.parse(argv._[0]);
+const output = argv.o || parsedPath.name + '.cc';
 
 function generateIfaceOperation(iface, opname, sigs) {
   console.log(iface + '::' + opname + ': ' + JSON.stringify(sigs, null, 2));
@@ -35,7 +49,7 @@ function generateIfaceInit(iface) {
     'static napi_value',
     `webidl_napi_interface_${iface.name}_constructor(napi_env env, ` +
       'napi_callback_info info) {',
-    '  return null;',
+    '  return nullptr;',
     '}',
     '',
     'static napi_status',
@@ -47,13 +61,13 @@ function generateIfaceInit(iface) {
       .map((opname) => (`{ "${opname}", nullptr, ` +
         `webidl_napi_interface_${iface.name}_${opname}, nullptr, nullptr, ` +
         'nullptr, ' +
-          [ 'napi_enumerable' ]
+          'static_cast<napi_property_attributes>(' + [ 'napi_enumerable' ]
             // Or in `napi_static` for static methods.
             .concat(iface.collapsedOps[opname][0].special === 'static'
               ? [ 'napi_static' ]
               : [])
             .join(' | ') +
-        ', nullptr }')).join(',\n    '),
+        '), nullptr }')).join(',\n    '),
     '  };',
     '',
     `  return napi_define_class(env, "${iface.name}", NAPI_AUTO_LENGTH, ` +
@@ -125,16 +139,23 @@ function generateInit(tree, moduleName) {
     '    ' + propArray.map((item) => (item.propDesc)).join(',\n    '),
     '  };',
     '',
-    '  NAPI_CALL(env, napi_define_properties(env, exports, props, sizeof(props) / sizeof(*props), props));',
+    '  NAPI_CALL(env, napi_define_properties(env, exports, sizeof(props) / sizeof(*props), props));',
     '  return exports;',
     '}'
   ].join('\n');
 }
 
-fs.writeFileSync(output, [
-  '#include js_native_api.h',
-]
-.concat(tree.filter((item) => (item.type === 'interface')).map(generateIface))
-.concat([
-  generateInit(tree, parsedPath.name),
-]).join('\n\n') + '\n');
+fs.writeFileSync(output,
+  ['js_native_api.h']
+    // If the user requested extra includes, add them as `#include "extra-include.h"`.
+    // argv.i may be absent, may be a string, or it may be an array.
+    .concat((argv.i
+      ? (typeof argv.i === 'string'
+        ? [ argv.i ]
+        : argv.i)
+      : []))
+    .map((item) => `#include "${item}"`)
+    .concat(tree.filter((item) => (item.type === 'interface')).map(generateIface))
+    .concat([
+      generateInit(tree, parsedPath.name),
+    ]).join('\n\n') + '\n');

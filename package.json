@@ -21,6 +21,7 @@
   },
   "homepage": "https://github.com/nodejs/webidl-napi#readme",
   "dependencies": {
-    "webidl2": "^23.13.0"
+    "webidl2": "^23.13.0",
+    "yargs": "^16.0.3"
   }
 }

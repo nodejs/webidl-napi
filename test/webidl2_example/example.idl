@@ -1,0 +1,8 @@
+interface WebIDLCompiler : WebIDL{
+    static DOMString compile(DOMString dataFragment);
+    static DOMString compile(object dataTree);
+};
+
+interface WebIDL{
+    static object parse(); 
+};
