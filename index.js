@@ -42,34 +42,6 @@ const typemapWebIDLToNAPI = {
   'object': 'napi_object'
 };
 
-// Typemap for storing the native return value.
-const typemapNativeToWebIDLReturn = {
-  // boolean
-  'boolean': 'bool',
-
-  // number
-  'byte': 'char',
-  'octet': 'char',
-  'short': 'short',
-  'unsigned short': 'unsigned short',
-  'long': 'long',
-  'unsigned long': 'long',
-  'long long': 'long long',
-  'unsigned long long': 'unsigned long long',
-  'float': 'float',
-  'unrestricted float': 'float',
-  'double': 'float',
-  'unrestricted double': 'float',
-
-  // string
-  'DOMString': 'const char*',
-  'ByteString': 'const char*',
-  'USVString': 'const char*',
-
-  // object
-  'object': 'napi_object'
-};
-
 // Create an initializer list for signature candidates that will be processed by
 // `webidl_napi_pick_signature()`. It may look like this:
 // { { true, { napi_number, object } }, { true, { napi_string, napi_object } }
@@ -168,7 +140,7 @@ function generateCall(ifname, sig, indent) {
       '',
       // If there's a return value, assign it to a variable.
       indent + ((sig.idlType && sig.idlType.type === 'return-type')
-        ? 'auto ret = '
+        ? 'ret = '
         : '') + `${ifname}::${sig.name}(` +
           // Generate the arguments: native_arg_0, native_arg_1, ...
           Array.apply(0, Array(sig.arguments.length))
@@ -178,38 +150,87 @@ function generateCall(ifname, sig, indent) {
     .join('\n');
 }
 
+const returnValueConversions = {
+  'object': {
+    nativeType: 'napi_value',
+    converter() { return [ '  js_ret = ret;' ]; }
+  },
+  'DOMString': {
+    nativeType: 'std::string',
+    converter() {
+      return [
+        '  NAPI_CALL(env, napi_create_string_utf8(env, ret.c_str(), ret.size(), ' +
+          '&js_ret));'
+      ];
+    }
+  }
+};
+
 function generateIfaceOperation(ifname, opname, sigs) {
   const maxArgs =
     sigs.reduce((soFar, item) => Math.max(soFar, item.arguments.length), 0);
+  const hasReturn = (sigs[0].idlType && sigs[0].idlType.type === 'return-type');
+  const webIDLReturnType = sigs[0].idlType.idlType;
 
-  return [
+  const opHeader = [
     'static napi_value',
     `webidl_napi_interface_${ifname}_${opname}(` +
       'napi_env env, napi_callback_info info) {',
-  ]
-  // If we have args, then generate the arg retrieval code, and decide which
-  // signature to call.
-  .concat(maxArgs === 0
-    ? []
-    : [ generateParamRetrieval(sigs, maxArgs) ])
-  .concat([
-    '',
-  ])
-  .concat(sigs.length > 1
-    // If we have multiple signatures we generate calls for each signature and
-    // choose at runtime which overload to call via an `if ... else if ...`.
-    ? [
-      sigs.map((sig, index) => [
-        `  if (sig_idx == ${index}) {`,
-        generateCall(ifname, sig, '    '),
-        '  }'
-      ].join('\n')).join('\n  else\n') ]
-    // Otherwise we generate a call for the first (and only) signature.
-    : [ generateCall(ifname, sigs[0], '  ') ])
-  .concat([
-    '  return nullptr;',
-    '}'
-  ]).join('\n');
+    '  napi_value js_ret = nullptr;',
+  ];
+
+  // If the op has a return value that we don't know how to compute because the
+  // conversion is not found in `returnValueConversions`, we generate code that
+  // throws an error.
+  if (!(hasReturn && (webIDLReturnType in returnValueConversions))) {
+    return opHeader
+      .concat([
+        '  NAPI_CALL(env, napi_throw_error(env, NULL, ' +
+          `"Return value conversion for type ${webIDLReturnType} not ` +
+          'implemented"));',
+        '  return js_ret;',
+        '}'
+      ]);
+  }
+
+  return opHeader
+    // If we have args, then generate the arg retrieval code, and decide which
+    // signature to call.
+    .concat(maxArgs === 0
+      ? []
+      : [ generateParamRetrieval(sigs, maxArgs) ])
+    // If we have a return value declare the variable that stores the return
+    // value from the call to the native function.
+    .concat(hasReturn
+      ? [ `  ${returnValueConversions[webIDLReturnType].nativeType} ret;` ]
+      : [])
+    .concat([
+      '',
+    ])
+    .concat(sigs.length > 1
+      // If we have multiple signatures we generate calls for each signature and
+      // choose at runtime which overload to call via an `if ... else if ...`.
+      ? [
+        sigs.map((sig, index) => [
+          `  if (sig_idx == ${index}) {`,
+          generateCall(ifname, sig, '    '),
+          '  }'
+        ].join('\n')).join('\n  else\n') ]
+      // Otherwise we generate a call for the first (and only) signature.
+      : [ generateCall(ifname, sigs[0], '  ') ])
+    // Generate the code for computing the return value. If there is a return
+    // value, we assume that all signatures have the same return type, so it's
+    // enough to consult the first.
+    .concat(hasReturn
+      // If the op has a return type, compute it and store the resulting
+      // `napi_value` in `js_ret`.
+      ? returnValueConversions[webIDLReturnType].converter()
+      // If the op has no return type, return nullptr.
+      : [])
+    .concat([
+       '  return js_ret;',
+      '}'
+    ]).join('\n');
 }
 
 function generateIfaceInit(ifname, collapsedOps) {

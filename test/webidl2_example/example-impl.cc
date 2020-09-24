@@ -2,14 +2,14 @@
 #include "js_native_api.h"
 #include "example-impl.h"
 
-napi_value WebIDLCompiler::compile(const char* string) {
+std::string WebIDLCompiler::compile(const char* string) {
   fprintf(stderr, "WebIDLCompiler::compile(\"%s\");\n", string);
-  return nullptr;
+  return std::string("compile a string");
 }
 
-napi_value WebIDLCompiler::compile(napi_value dataTree) {
+std::string WebIDLCompiler::compile(napi_value dataTree) {
   fprintf(stderr, "WebIDLCompiler::compile(%p);\n", dataTree);
-  return nullptr;
+  return std::string("compile an object");
 }
 
 napi_value WebIDL::parse() {
