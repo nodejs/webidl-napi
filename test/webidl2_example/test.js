@@ -4,5 +4,7 @@ const assert = require('assert');
 test(require(`./build/${buildType}/example.node`));
 
 function test(binding) {
-  console.log(binding);
+  const x = binding.WebIDL.parse();
+  const y = binding.WebIDLCompiler.compile('abc');
+  const z = binding.WebIDLCompiler.compile({ abc: 'def' });
 }

@@ -50,6 +50,7 @@ webidl_napi_pick_signature(napi_env env,
                            napi_value* argv,
                            std::vector<webidl_sig> sigs,
                            int* sig_idx) {
+
   // Advance through the signatures one argument type at a time and mark those
   // as non-candidates whose signature does not correspond to the sequence of
   // argument types found in the actual arguments.
@@ -57,7 +58,7 @@ webidl_napi_pick_signature(napi_env env,
     napi_valuetype val_type;
     napi_status status = napi_typeof(env, argv[idx], &val_type);
     if (status != napi_ok) return status;
-    for (auto sig: sigs)
+    for (auto& sig: sigs)
       if (sig.candidate)
         if (idx >= sig.sig.size() || sig.sig[idx] != val_type)
           sig.candidate = false;
