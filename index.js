@@ -82,21 +82,14 @@ function generateParamRetrieval(sigs, maxArgs) {
 // `false` if not already `false` and if a conversion could not be found. This
 // informs the rest of the call-to-native generation.
 function generateConversionToNative(arg, index, convResult, indent) {
+  console.log('generateConversionToNative: ' + JSON.stringify(arg, null, 2));
   const conversions = {
     'napi_string': {
       'DOMString': function() {
         return [
-          `std::unique_ptr<char[]> native_arg_${index}_scope;`,
-          '{',
-          '  size_t size;',
-          `  NAPI_CALL(env, napi_get_value_string_utf8(env, argv[${index}], ` +
-            'nullptr, 0, &size));',
-          `  native_arg_${index}_scope = ` +
-            'std::unique_ptr<char[]>(new char[size + 1]);',
-          `  NAPI_CALL(env, napi_get_value_string_utf8(env, argv[${index}], ` +
-            `native_arg_${index}_scope.get(), size, &size));`,
-          '}',
-          `char* native_arg_${index} = native_arg_${index}_scope.get();`
+          `std::string native_arg_${index};`,
+          `NAPI_CALL(env, webidl_napi_js_to_native_string(env,` +
+            `argv[${index}], &native_arg_${index}));`,
         ].map((item) => (indent + item));
       }
     },

@@ -6,7 +6,7 @@
 
 class WebIDLCompiler {
  public:
-  static std::string compile(const char* string);
+  static std::string compile(const std::string& string);
   static std::string compile(napi_value dataTree);
 };
 

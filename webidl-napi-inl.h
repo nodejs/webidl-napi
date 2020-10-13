@@ -45,6 +45,24 @@ struct webidl_sig {
 };
 
 static inline napi_status
+webidl_napi_js_to_native_string(napi_env env,
+                                napi_value str,
+                                std::string* result) {
+  size_t size;
+
+  napi_status status = napi_get_value_string_utf8(env, str, nullptr, 0, &size);
+  if (status != napi_ok) return status;
+
+  result->resize(size + 1);
+  status = napi_get_value_string_utf8(env, str,
+                                      const_cast<char*>(result->c_str()),
+                                      size + 1, &size);
+  if (status != napi_ok) return status;
+
+  return napi_ok;
+}
+
+static inline napi_status
 webidl_napi_pick_signature(napi_env env,
                            size_t argc,
                            napi_value* argv,

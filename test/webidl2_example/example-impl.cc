@@ -2,8 +2,8 @@
 #include "js_native_api.h"
 #include "example-impl.h"
 
-std::string WebIDLCompiler::compile(const char* string) {
-  fprintf(stderr, "WebIDLCompiler::compile(\"%s\");\n", string);
+std::string WebIDLCompiler::compile(const std::string& string) {
+  fprintf(stderr, "WebIDLCompiler::compile(\"%s\");\n", string.c_str());
   return std::string("compile a string");
 }
 
