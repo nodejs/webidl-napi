@@ -42,6 +42,64 @@ const typemapWebIDLToNAPI = {
   'object': 'napi_object'
 };
 
+function generateEnumMaps(enumDef) {
+  const valueMap = enumDef.values.reduce((soFar, item) => Object.assign(soFar, {
+    // For the native enum value, if the string is empty, generate `_empty`.
+    // Otherwise, the generated value is obtained by uppercasing the first
+    // letter and replacing anything that's not an ASCII letter or a number
+    // with an underscore.
+    [item.value]: (item.value === ''
+      ? '_empty'
+      : item.value[0].toUpperCase() +
+        item.value.slice(1).replace(/[^0-9a-zA-Z]/g, '_'))
+  }), {});
+
+  console.log('generateEnumMaps: ' + JSON.stringify(enumDef, null, 2));
+  return [
+    //
+    // The conversion to native
+    //
+    'static napi_status',
+    `${enumDef.name}_toNative(napi_env env, napi_value val, ` +
+      `${enumDef.name}* result) {`,
+    '  std::string str_val;',
+    '  napi_status status = webidl_napi_js_to_native_string(env, val, &str_val);',
+    '  if (status != napi_ok) return status;',
+    '',
+  ]
+  // Generate an if-statement for each possible enum value, and one for the case
+  // where the value is not in the list. Join the statements with `else`.
+  .concat(enumDef.values.map((val) => [
+  `  if (str_val == "${val.value}") {`,
+  `    *result = ${enumDef.name}::${valueMap[val.value]};`,
+  '  }',
+  ].join('\n')).concat([ '    { status = napi_invalid_arg; }' ]).join('\n  else\n'))
+  .concat([
+    '  return status;',
+    '}',
+    '',
+    //
+    // The conversion to JS
+    //
+    'static napi_status',
+    `${enumDef.name}_toJS(napi_env env, ${enumDef.name} val, ` +
+      'napi_value* result) {',
+    '  napi_status status = napi_ok;',
+    '',
+  ])
+  // Generate an if-statement for each possible enum value, and one for the case
+  // where the value is not in the list. Join the statements with `else`.
+  .concat(enumDef.values.map((val) => [
+  `  if (val == ${valueMap[val.value]}) {`,
+  `    status = napi_create_string_utf8(env, "${val.value}", NAPI_AUTO_LENGTH, result);`,
+  '  }',
+  ].join('\n')).concat([ '    { status = napi_invalid_arg; }' ]).join('\n  else\n'))
+  .concat([
+    '  return status;',
+    '}'
+  ]).join('\n');
+}
+
 // Create an initializer list for signature candidates that will be processed by
 // `webidl_napi_pick_signature()`. It may look like this:
 // { { true, { napi_number, object } }, { true, { napi_string, napi_object } }
@@ -353,6 +411,7 @@ fs.writeFileSync(outputFile,
         : argv.i)
       : []))
     .map((item) => `#include "${item}"`)
+    .concat(tree.filter((item) => (item.type === 'enum')).map(generateEnumMaps))
     .concat(tree.filter((item) => (item.type === 'interface')).map(generateIface))
     .concat([
       generateInit(tree, parsedPath.name),

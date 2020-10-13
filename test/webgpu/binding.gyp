@@ -12,7 +12,7 @@
           'action': [
             'node',
             '../../index.js',
-            '-i', 'example-impl.h',
+            '-i', 'webgpu-impl.h',
             '-o', '<(RULE_INPUT_ROOT).cc',
             '<(RULE_INPUT_PATH)',
           ]
