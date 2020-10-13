@@ -148,13 +148,13 @@ function generateConversionToNative(arg, index, convResult, indent) {
           `std::string native_arg_${index};`,
           `NAPI_CALL(env, webidl_napi_js_to_native_string(env,` +
             `argv[${index}], &native_arg_${index}));`,
-        ].map((item) => (indent + item));
+        ];
       }
     },
     'napi_object': {
       'object': function() {
         return [
-          `${indent}napi_value native_arg_${index} = argv[${index}];`,
+          `napi_value native_arg_${index} = argv[${index}];`,
         ];
       }
     }
@@ -178,6 +178,7 @@ function generateConversionToNative(arg, index, convResult, indent) {
           'implemented"));',
       'return nullptr;'
     ])
+    .map((item) => (indent + item))
     .join('\n');
 }
 
@@ -206,6 +207,10 @@ const returnValueConversions = {
     nativeType: 'napi_value',
     converter() { return [ '  js_ret = ret;' ]; }
   },
+  'Promise': {
+    nativeType: 'napi_value',
+    converter() { return [ '  js_ret = ret;' ]; }
+  },
   'DOMString': {
     nativeType: 'std::string',
     converter() {
@@ -221,7 +226,13 @@ function generateIfaceOperation(ifname, opname, sigs) {
   const maxArgs =
     sigs.reduce((soFar, item) => Math.max(soFar, item.arguments.length), 0);
   const hasReturn = (sigs[0].idlType && sigs[0].idlType.type === 'return-type');
-  const webIDLReturnType = sigs[0].idlType.idlType;
+
+  let webIDLReturnType = sigs[0].idlType.idlType;
+  if (typeof webIDLReturnType === 'object' && sigs[0].idlType.generic) {
+    webIDLReturnType = sigs[0].idlType.generic;
+  }
+
+  console.log(`${ifname}::${opname} sigs: ` + JSON.stringify(sigs, null, 2));
 
   const opHeader = [
     'static napi_value',
@@ -241,7 +252,7 @@ function generateIfaceOperation(ifname, opname, sigs) {
           'implemented"));',
         '  return js_ret;',
         '}'
-      ]);
+      ]).join('\n');
   }
 
   return opHeader
