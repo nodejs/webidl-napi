@@ -321,7 +321,7 @@ function generateInit(tree, moduleName) {
     '////////////////////////////////////////////////////////////////////////////////',
     '',
     'napi_value',
-    `${moduleName}_init(napi_env env, napi_value exports) {`,
+    `${moduleName}_init(napi_env env) {`,
     '  napi_value ' + propArray.map((item) => (item.valueName)).join(',\n    ') + ';',
     '',
     '  ' + propArray.map((item) => (item.initializer)).join(';\n  ') + ';',
@@ -329,6 +329,9 @@ function generateInit(tree, moduleName) {
     '  napi_property_descriptor props[] = {',
     '    ' + propArray.map((item) => (item.propDesc)).join(',\n    '),
     '  };',
+    '  napi_value exports;',
+    '',
+    '  NAPI_CALL(env, napi_create_object(env, &exports));',
     '',
     '  NAPI_CALL(env, napi_define_properties(env, exports, ' +
       'sizeof(props) / sizeof(*props), props));',
