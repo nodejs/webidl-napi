@@ -1,12 +1,19 @@
 #ifndef WEBIDL_NAPI_INL
 #define WEBIDL_NAPI_INL
 
+#include <string.h>
 #include <memory>
 #include <vector>
 #include "js_native_api.h"
 
 // Empty value so that macros here are able to return NULL or void
 #define NAPI_RETVAL_NOTHING  // Intentionally blank #define
+
+// A line that looks like a stack frame from a JS exception
+#define SOURCE_LOCATION                                        \
+  (std::string("\n    at ") + std::string(__func__) +          \
+   std::string(" (" __FILE__ ":") + std::to_string(__LINE__) + \
+   std::string(")"))
 
 #define GET_AND_THROW_LAST_ERROR(env)                                    \
   do {                                                                   \
@@ -19,7 +26,8 @@
       const char* error_message = error_info->error_message != NULL ?    \
         error_info->error_message :                                      \
         "empty error message";                                           \
-      napi_throw_error((env), NULL, error_message);                      \
+      napi_throw_error((env), NULL, (std::string(error_message) +        \
+          SOURCE_LOCATION).c_str());                                     \
     }                                                                    \
   } while (0)
 
@@ -44,10 +52,14 @@ struct webidl_sig {
   std::vector<napi_valuetype> sig;
 };
 
+using DOMString = std::string;
+using object = napi_value;
+using Promise = napi_value;
+
 static inline napi_status
-webidl_napi_js_to_native_string(napi_env env,
-                                napi_value str,
-                                std::string* result) {
+DOMString_toNative(napi_env env,
+                   napi_value str,
+                   DOMString* result) {
   size_t size;
 
   napi_status status = napi_get_value_string_utf8(env, str, nullptr, 0, &size);
@@ -59,6 +71,37 @@ webidl_napi_js_to_native_string(napi_env env,
                                       size + 1, &size);
   if (status != napi_ok) return status;
 
+  return napi_ok;
+}
+
+static inline napi_status
+DOMString_toJS(napi_env env,
+               DOMString str,
+               napi_value* result) {
+  return napi_create_string_utf8(env, str.c_str(), str.size(), result);
+}
+
+static inline napi_status
+object_toNative(napi_env env, napi_value obj, object* result) {
+  *result = obj;
+  return napi_ok;
+}
+
+static inline napi_status
+object_toJS(napi_env env, object obj, napi_value* result) {
+  *result = obj;
+  return napi_ok;
+}
+
+static inline napi_status
+Promise_toNative(napi_env env, napi_value obj, object* result) {
+  *result = obj;
+  return napi_ok;
+}
+
+static inline napi_status
+Promise_toJS(napi_env env, object obj, napi_value* result) {
+  *result = obj;
   return napi_ok;
 }
 

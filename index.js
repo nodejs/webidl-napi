@@ -42,29 +42,6 @@ const typemapWebIDLToNAPI = {
   'object': 'napi_object'
 };
 
-const typeConversions = {
-  'napi_string': {
-    'DOMString': function(source, destination) {
-      return [
-        `std::string ${destination};`,
-        `NAPI_CALL(`,
-        `    env,`,
-        `    webidl_napi_js_to_native_string(`,
-        `        env,`,
-        `        ${source},`,
-        `        &${destination}));`,
-      ];
-    }
-  },
-  'napi_object': {
-    'object': function(source, destination) {
-      return [
-        `napi_value ${destination} = ${source};`,
-      ];
-    }
-  }
-};
-
 function generateInitializerList(list, indent) {
   indent = indent || '';
   return (Array.isArray(list)
@@ -92,20 +69,20 @@ function generateEnumMaps(enumDef) {
     //
     // The conversion to native
     //
-    `static napi_status`,
+    `static inline napi_status`,
     `${enumDef.name}_toNative(`,
     `    napi_env env,`,
     `    napi_value val,`,
     `    ${enumDef.name}* result) {`,
     `  std::string str_val;`,
-    `  napi_status status = webidl_napi_js_to_native_string(env, val, &str_val);`,
+    `  napi_status status = DOMString_toNative(env, val, &str_val);`,
     `  if (status != napi_ok) return status;`,
     ``,
     // Generate an if-statement for each possible enum value, and one for the
     // case where the value is not in the list. Join the statements with `else`.
     [
       ...enumDef.values.map((val) => [
-        `  if (str_val == "${val.value}") {`,
+        `  if (!strncmp(str_val.c_str(), "${val.value}", str_val.size())) {`,
         `    *result = ${enumDef.name}::${valueMap[val.value]};`,
         `  }`,
       ].join('\n')),
@@ -117,7 +94,7 @@ function generateEnumMaps(enumDef) {
     //
     // The conversion to JS
     //
-    `static napi_status`,
+    `static inline napi_status`,
     `${enumDef.name}_toJS(`,
     `    napi_env env,`,
     `    ${enumDef.name} val,`,
@@ -143,8 +120,86 @@ function generateEnumMaps(enumDef) {
   ].join('\n');
 }
 
-function generateDictionaryMaps(dictDef) {
-  console.log('generateDictionaryMaps: ' + JSON.stringify(dictDef, null, 2));
+function generateDictionaryMaps(dict) {
+  return [
+  `static inline napi_status`,
+  `${dict.name}_toNative(`,
+  `    napi_env env,`,
+  `    napi_value val,`,
+  `    ${dict.name}* result) {`,
+  `  napi_status status;`,
+  ...dict.members.reduce((soFar, member) => soFar.concat([
+    `  {`,
+    `    napi_value js_member;`,
+    `    status = napi_get_named_property(env,`,
+    `        val,`,
+    `        "${member.name}",`,
+    `        &js_member);`,
+    `    if (status != napi_ok) return status;`,
+    ``,
+    `    status = ${member.idlType.idlType}_toNative(`,
+    `        env,`,
+    `        js_member,`,
+    `        &(result->${member.name}));`,
+    `    if (status != napi_ok) return status;`,
+    `  }`,
+  ]), []),
+  `  return napi_ok;`,
+  `}`,
+  ``,
+  `static inline napi_status`,
+  `${dict.name}_toJS(`,
+  `    napi_env env,`,
+  `    ${dict.name}* val,`,
+  `    napi_value* result) {`,
+  `  napi_status status;`,
+  `  napi_value ret;`,
+  // Declare a `napi_value` `js_prop_0`, `js_prop_1`, ... for each member.
+  `  napi_value`,
+  `    ${dict.members.map((item, idx) => `js_prop_${idx}`).join(',\n    ')};`,
+  ``,
+  // Create a statement that converts from the native type of the native member
+  // to a `napi_value`, stored in `js_prop_0`, ...
+  ...dict.members.reduce((soFar, member, idx) => soFar.concat([
+    `  status = ${member.idlType.idlType}_toJS(`,
+    `      env,`,
+    `      val->${member.name},`,
+    `      &js_prop_${idx});`,
+    `  if (status != napi_ok) return status;`,
+    ``
+  ]), []),
+  // Create a `napi_property_descriptor` array with a descriptor for each
+  // member.
+  `  napi_property_descriptor props[] =`,
+  generateInitializerList(dict.members.map((member, idx) => [
+    `"${member.name}"`,
+    `nullptr`,
+    `nullptr`,
+    `nullptr`,
+    `nullptr`,
+    `js_prop_${idx}`,
+    `napi_enumerable`,
+    `nullptr`
+  ]), '  ') + ';',
+  ``,
+  // Create the object that will hold the properties, assign the properties, and
+  // return the object by assigning it to `*result`.
+  `  status = napi_create_object(`,
+  `      env,`,
+  `      &ret);`,
+  `  if (status != napi_ok) return status;`,
+  ``,
+  `  status = napi_define_properties(`,
+  `      env,`,
+  `      ret,`,
+  `      sizeof(props) / sizeof(*props),`,
+  `      props);`,
+  `  if (status != napi_ok) return status;`,
+  ``,
+  `  *result = ret;`,
+  `  return napi_ok;`,
+  `}`,
+  ].join('\n');
 }
 
 // Create an initializer list for signature candidates that will be processed by
@@ -190,87 +245,56 @@ function generateParamRetrieval(sigs, maxArgs) {
   ].join('\n');
 }
 
-// `convResult` is an out-parameter whose property `canConvert` will be set to
-// `false` if not already `false` and if a conversion could not be found. This
-// informs the rest of the call-to-native generation.
-function generateConversionToNative(arg, index, convResult, indent) {
-  // Find the conversion.
-  const napiType = typemapWebIDLToNAPI[arg.idlType.idlType];
-  let conversion = typeConversions[napiType];
-  if (conversion) conversion = conversion[arg.idlType.idlType];
-
-  // If not found, and `canConvert` is still `true`, set it to `false`.
-  convResult.canConvert = convResult.canConvert && !!conversion;
-
-  // Return the result of the conversion if we have it and generate code for
-  // throwing and exception if we do not.
-  return (conversion
-    ? conversion(`argv[${index}]`, `native_arg_${index}`)
-    : [
+function generateCall(ifname, sig, indent) {
+  function argToNativeCall(idlType, index, indent) {
+    return [
       `NAPI_CALL(`,
       `    env,`,
-      `    napi_throw_error(`,
-      `        env,`,
-      `        NULL,`,
-      `        "Conversion "`,
-      `            "from ${napiType} "`,
-      `            "to ${arg.idlType.idlType} "`,
-      `            "not implemented"));`,
-      `return nullptr;`
-    ])
-    .map((item) => (indent + item))
-    .join('\n');
-}
-
-function generateCall(ifname, sig, indent) {
-  const convResult = { canConvert: true };
-  return [
-    ...sig.arguments.map((arg, index) =>
-      generateConversionToNative(arg, index, convResult, indent)),
-    // Only generate a call to native if we found an implementation for the
-    // parameter conversion to the native data types.
-    ...(convResult.canConvert ? [
-      '',
-      // If there's a return value, assign it to a variable.
-      indent + ((sig.idlType && sig.idlType.type === 'return-type')
-        ? 'ret = '
-        : '') + `${ifname}::${sig.name}(` +
-          // Generate the arguments: native_arg_0, native_arg_1, ...
-          Array.apply(0, Array(sig.arguments.length))
-            .map((item, idx) => `native_arg_${idx}`).join(', ') +
-        ');'
-    ] : [])
-  ].join('\n');
-}
-
-const returnValueConversions = {
-  'object': {
-    nativeType: 'napi_value',
-    converter() { return [
-      `  js_ret = ret;`
-    ]; }
-  },
-  'Promise': {
-    nativeType: 'napi_value',
-    converter() { return [
-      `  js_ret = ret;`
-    ]; }
-  },
-  'DOMString': {
-    nativeType: 'std::string',
-    converter() {
-      return [
-        `  NAPI_CALL(`,
-        `      env,`,
-        `      napi_create_string_utf8(`,
-        `          env,`,
-        `          ret.c_str(),`,
-        `          ret.size(),`,
-        `          &js_ret));`
-      ];
-    }
+      `    ${idlType}_toNative(env,`,
+      `        argv[${index}],`,
+      `        &native_arg_${index}));`,
+    ].map((item) => (indent + item));
   }
-};
+  return [
+    // Convert arguments to native data types. This assumes that the DOM type
+    // is a real C++ type and that a function of the name `DOMType_toNative`
+    // exists.
+    ...sig.arguments.reduce((soFar, arg, index) => soFar.concat([
+      `${arg.idlType.idlType} native_arg_${index};`,
+      // If the argument is optional, we check that we have it first.
+      ...(arg.optional
+        ? [
+            `bool have_arg_${index} = false;`,
+            `{`,
+            `  napi_valuetype val_type;`,
+            `  NAPI_CALL(`,
+            `      env,`,
+            `      napi_typeof(`,
+            `          env,`,
+            `          argv[${index}],`,
+            `          &val_type));`,
+            `  have_arg_${index} = (val_type != napi_undefined);`,
+            `}`,
+            `if (have_arg_${index}) {`,
+            ...argToNativeCall(arg.idlType.idlType, index, '  '),
+            `}`,
+          ]
+        : argToNativeCall(arg.idlType.idlType, index, '')),
+    ]), []),
+    ``,
+    // If there's a return value, assign it to a variable.
+    ((sig.idlType && sig.idlType.type === 'return-type')
+      ? 'ret = '
+      : '') + `${ifname}::${sig.name}(` +
+        // Generate the arguments: native_arg_0, native_arg_1, ...
+        Array.apply(0, Array(sig.arguments.length))
+          .map((item, idx) => `native_arg_${idx}`).join(', ') +
+      ');',
+    ``
+  ]
+  .map((item) => ((item == '') ? item : (indent + item)))
+  .join('\n');
+}
 
 function generateIfaceOperation(ifname, opname, sigs) {
   const maxArgs =
@@ -288,52 +312,41 @@ function generateIfaceOperation(ifname, opname, sigs) {
     `    napi_env env,`,
     `    napi_callback_info info) {`,
     `  napi_value js_ret = nullptr;`,
-    // If the op has a return value that we don't know how to compute because
-    // the conversion was not found in `returnValueConversions`, we generate
-    // code that throws an error.
-    ...((!(hasReturn && (webIDLReturnType in returnValueConversions))) ? [
+    // If we have args, then generate the arg retrieval code, and decide which
+    // signature to call.
+    ...((maxArgs === 0) ? [] : [ generateParamRetrieval(sigs, maxArgs) ]),
+    // If we have a return value, declare the variable that stores the return
+    // value from the call to the native function.
+    ...(hasReturn ? [ `  ${webIDLReturnType} ret;` ] : []),
+    ``,
+    // If we have multiple signatures we generate calls for each signature and
+    // choose at runtime which overload to call via an `if ... else if ...`.
+    ...(sigs.length > 1
+      ? [ sigs.map((sig, index) => [
+          `  if (sig_idx == ${index}) {`,
+          generateCall(ifname, sig, '    '),
+          '  }'
+        ].join('\n')).join('\n  else\n') ]
+      : [ generateCall(ifname, sigs[0], '  ') ]),
+    // If the op has a return type, compute it and store the resulting
+    // `napi_value` in `js_ret`.
+    ...(hasReturn ? [
       `  NAPI_CALL(`,
       `      env,`,
-      `      napi_throw_error(`,
+      `      ${webIDLReturnType}_toJS(`,
       `          env,`,
-      `          NULL,`,
-      `          "Return value conversion for type "`,
-      `              "${webIDLReturnType}"`,
-      `              " not implemented"));`,
-      `  return js_ret;`,
-      `}`
-    ] : [
-      // If we have args, then generate the arg retrieval code, and decide which
-      // signature to call.
-      ...((maxArgs === 0) ? [] : [ generateParamRetrieval(sigs, maxArgs) ]),
-      // If we have a return value declare the variable that stores the return
-      // value from the call to the native function.
-      ...(hasReturn
-        ? [ `  ${returnValueConversions[webIDLReturnType].nativeType} ret;` ]
-        : []),
-      ``,
-      // If we have multiple signatures we generate calls for each signature and
-      // choose at runtime which overload to call via an `if ... else if ...`.
-      ...(sigs.length > 1
-        ? [ sigs.map((sig, index) => [
-            `  if (sig_idx == ${index}) {`,
-            generateCall(ifname, sig, '    '),
-            '  }'
-          ].join('\n')).join('\n  else\n') ]
-        : [ generateCall(ifname, sigs[0], '  ') ]),
-      // If the op has a return type, compute it and store the resulting
-      // `napi_value` in `js_ret`.
-      ...(hasReturn ? returnValueConversions[webIDLReturnType].converter() : []),
-      `  return js_ret;`,
-      `}`
-    ])
+      `          ret,`,
+      `          &js_ret));`
+    ] : []),
+    `  return js_ret;`,
+    `}`
   ].join('\n');
 }
 
 function generateIfaceInit(ifname, ops) {
   return [
     // Generate the constructor for the JS class.
-    'static napi_value',
+    `static napi_value`,
     `webidl_napi_interface_${ifname}_constructor(`,
     `    napi_env env,`,
     `    napi_callback_info info) {`,
@@ -341,7 +354,7 @@ function generateIfaceInit(ifname, ops) {
     `}`,
     ``,
     // Generate the init method that defines the JS class.
-    'static napi_status',
+    `static inline napi_status`,
     `webidl_napi_create_interface_${ifname}(`,
     `    napi_env env,`,
     `    napi_value* result) {`,
@@ -411,44 +424,45 @@ function generateInit(tree, moduleName) {
   //     napi_enumerable, nullptr
   //   })
   // }
-  const propArray = tree
-    .filter((item) => (item.type === 'interface'))
-    .map((item, idx) => ({
-      valueName: `interface_${idx}`,
-        propDesc: [
-          `"${item.name}"`,
-          `nullptr`,
-          `nullptr`,
-          `nullptr`,
-          `nullptr`,
-          `interface_${idx}`,
-          `napi_enumerable`,
-          `nullptr`
-        ],
-        initializer: [
-          `NAPI_CALL(`,
-          `    env,`,
-          `    webidl_napi_create_interface_${item.name}(`,
-          `        env,`,
-          `        &interface_${idx}))`
-        ].join('\n')
-    }));
+  const interfaces = tree.filter((item) => (item.type === 'interface'));
 
   return [
-    `////////////////////////////////////////////////////////////////////////////////`,
+    `/////////////////////////////////////////////////////////////////////////`,
+      `///////`,
     `// Init module \`${moduleName}\``,
-    `////////////////////////////////////////////////////////////////////////////////`,
+    `/////////////////////////////////////////////////////////////////////////`,
+      `///////`,
     ``,
     `napi_value`,
     `${moduleName}_init(`,
     `    napi_env env) {`,
+    // Declare a `napi_value` `interface_0`, `interface_1`, ... for each
+    // interface found.
     `  napi_value`,
-    `    ${propArray.map((item) => (item.valueName)).join(',\n    ')};`,
+    `    ${interfaces.map((item, idx) => (`interface_${idx}`)).join(',\n    ')};`,
     ``,
-    `  ${propArray.map((item) => (item.initializer)).join(';\n  ') };`,
+    // Initialize each `interface_0`, ... value.
+    ...interfaces.reduce((soFar, item, idx) => soFar.concat([
+      `  NAPI_CALL(`,
+      `      env,`,
+      `      webidl_napi_create_interface_${item.name}(`,
+      `          env,`,
+      `          &interface_${idx}));`
+    ]), []),
     ``,
+    // Place all `interface_0`, ... values into an array of property
+    // descriptors.
     `  napi_property_descriptor props[] =`,
-    `${generateInitializerList(propArray.map((item) => (item.propDesc)), '    ')};`,
+    generateInitializerList(interfaces.map((item, idx) => [
+      `"${item.name}"`,
+      `nullptr`,
+      `nullptr`,
+      `nullptr`,
+      `nullptr`,
+      `interface_${idx}`,
+      `napi_enumerable`,
+      `nullptr`
+    ]), '  ') + ';',
     `  napi_value exports;`,
     ``,
     `  NAPI_CALL(`,
