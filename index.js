@@ -88,7 +88,6 @@ function generateEnumMaps(enumDef) {
         item.value.slice(1).replace(/[^0-9a-zA-Z]/g, '_'))
   }), {});
 
-  console.log('generateEnumMaps: ' + JSON.stringify(enumDef, null, 2));
   return [
     //
     // The conversion to native
@@ -195,8 +194,6 @@ function generateParamRetrieval(sigs, maxArgs) {
 // `false` if not already `false` and if a conversion could not be found. This
 // informs the rest of the call-to-native generation.
 function generateConversionToNative(arg, index, convResult, indent) {
-  console.log('generateConversionToNative: ' + JSON.stringify(arg, null, 2));
-
   // Find the conversion.
   const napiType = typemapWebIDLToNAPI[arg.idlType.idlType];
   let conversion = typeConversions[napiType];
@@ -284,8 +281,6 @@ function generateIfaceOperation(ifname, opname, sigs) {
   if (typeof webIDLReturnType === 'object' && sigs[0].idlType.generic) {
     webIDLReturnType = sigs[0].idlType.generic;
   }
-
-  console.log(`${ifname}::${opname} sigs: ` + JSON.stringify(sigs, null, 2));
 
   return [
     `static napi_value`,
