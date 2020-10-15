@@ -42,6 +42,28 @@ const typemapWebIDLToNAPI = {
   'object': 'napi_object'
 };
 
+function generateNativeType(idlType) {
+  return ((typeof idlType.idlType === 'string')
+    ? idlType.idlType
+    : `${idlType.generic}<${idlType.idlType[0].idlType}>`);
+}
+
+function generateConversionToJS(retType, source, destination, indent) {
+  // If it's a templated type, like `Promise<Something>`, use :: for the
+  // converter.
+  const connector = ((typeof retType.idlType === 'object' && !!retType.generic)
+    ? '::'
+    : '_');
+  return [
+    `${generateNativeType(retType)}${connector}toJS(`,
+    `    env,`,
+    `    ${source},`,
+    `    ${destination})`
+  ]
+  .map((item) => (indent + item))
+  .join('\n');
+}
+
 function generateInitializerList(list, indent) {
   indent = indent || '';
   return (Array.isArray(list)
@@ -209,7 +231,8 @@ function generateSigCandidates(sigs) {
   return generateInitializerList(
     sigs.map((sig) => [
       true,
-      sig.arguments.map((arg) => typemapWebIDLToNAPI[arg.idlType.idlType])
+      sig.arguments.map((arg) =>
+        typemapWebIDLToNAPI[generateNativeType(arg.idlType)])
     ]), '          ');
 }
 
@@ -260,7 +283,7 @@ function generateCall(ifname, sig, indent) {
     // is a real C++ type and that a function of the name `DOMType_toNative`
     // exists.
     ...sig.arguments.reduce((soFar, arg, index) => soFar.concat([
-      `${arg.idlType.idlType} native_arg_${index};`,
+      `${generateNativeType(arg.idlType)} native_arg_${index};`,
       // If the argument is optional, we check that we have it first.
       ...(arg.optional
         ? [
@@ -299,12 +322,8 @@ function generateCall(ifname, sig, indent) {
 function generateIfaceOperation(ifname, opname, sigs) {
   const maxArgs =
     sigs.reduce((soFar, item) => Math.max(soFar, item.arguments.length), 0);
-  const hasReturn = (sigs[0].idlType && sigs[0].idlType.type === 'return-type');
-
-  let webIDLReturnType = sigs[0].idlType.idlType;
-  if (typeof webIDLReturnType === 'object' && sigs[0].idlType.generic) {
-    webIDLReturnType = sigs[0].idlType.generic;
-  }
+  const retType = sigs[0].idlType;
+  const hasReturn = (retType && retType.type === 'return-type');
 
   return [
     `static napi_value`,
@@ -317,7 +336,7 @@ function generateIfaceOperation(ifname, opname, sigs) {
     ...((maxArgs === 0) ? [] : [ generateParamRetrieval(sigs, maxArgs) ]),
     // If we have a return value, declare the variable that stores the return
     // value from the call to the native function.
-    ...(hasReturn ? [ `  ${webIDLReturnType} ret;` ] : []),
+    ...(hasReturn ? [ `  ${generateNativeType(retType)} ret;` ] : []),
     ``,
     // If we have multiple signatures we generate calls for each signature and
     // choose at runtime which overload to call via an `if ... else if ...`.
@@ -333,10 +352,7 @@ function generateIfaceOperation(ifname, opname, sigs) {
     ...(hasReturn ? [
       `  NAPI_CALL(`,
       `      env,`,
-      `      ${webIDLReturnType}_toJS(`,
-      `          env,`,
-      `          ret,`,
-      `          &js_ret));`
+      `${generateConversionToJS(retType, 'ret', '&js_ret', '      ')});`,
     ] : []),
     `  return js_ret;`,
     `}`

@@ -54,7 +54,6 @@ struct webidl_sig {
 
 using DOMString = std::string;
 using object = napi_value;
-using Promise = napi_value;
 
 static inline napi_status
 DOMString_toNative(napi_env env,
@@ -94,18 +93,6 @@ object_toJS(napi_env env, object obj, napi_value* result) {
 }
 
 static inline napi_status
-Promise_toNative(napi_env env, napi_value obj, object* result) {
-  *result = obj;
-  return napi_ok;
-}
-
-static inline napi_status
-Promise_toJS(napi_env env, object obj, napi_value* result) {
-  *result = obj;
-  return napi_ok;
-}
-
-static inline napi_status
 webidl_napi_pick_signature(napi_env env,
                            size_t argc,
                            napi_value* argv,
@@ -137,5 +124,18 @@ webidl_napi_pick_signature(napi_env env,
 
   return napi_ok;
 }
+
+template <typename T>
+class Promise {
+ public:
+  static inline napi_status
+  toJS(napi_env env, const Promise<T>& promise, napi_value* val) {
+    return napi_ok;
+  }
+  static inline napi_status
+  toNative(napi_env env, napi_value value, Promise<T>* promise) {
+    return napi_ok;
+  }
+};
 
 #endif  // WEBIDL_NAPI_INL
