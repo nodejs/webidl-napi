@@ -4,7 +4,8 @@
   "description": "WebIDL to N-API compiler",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "pretest": "node test/build.js",
+    "test": "node test"
   },
   "repository": {
     "type": "git",
@@ -21,6 +22,7 @@
   },
   "homepage": "https://github.com/nodejs/webidl-napi#readme",
   "dependencies": {
+    "bindings": "^1.5.0",
     "webidl2": "^23.13.0",
     "yargs": "^16.0.3"
   }
