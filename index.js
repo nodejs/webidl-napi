@@ -1,6 +1,8 @@
+#!/usr/bin/env node
 'use strict';
 
-const argv = require('yargs')
+const yargs = require('yargs');
+const argv = yargs
   .nargs('o', 1)
   .describe('o', 'output file')
   .help('h')
@@ -8,7 +10,18 @@ const argv = require('yargs')
   .describe('I', 'print include directory and exit')
   .describe('i', 'add #include after js_native_api.h')
   .nargs('i', 1)
+  .usage('Usage: $0 [options] filename.idl')
   .argv;
+
+if (argv._.length === 0) {
+  yargs.showHelp();
+  process.exit(1);
+}
+
+if (argv.I) {
+  console.log(__dirname);
+  process.exit(0);
+}
 
 const { parse } = require('webidl2');
 const fs = require('fs');
@@ -497,11 +510,6 @@ function generateInit(tree, moduleName) {
     `  return exports;`,
     `}`
   ].join('\n');
-}
-
-if (argv.I) {
-  console.log(__dirname);
-  process.exit(0);
 }
 
 const file = fs.readFileSync(argv._[0], { encoding: 'utf-8' });
