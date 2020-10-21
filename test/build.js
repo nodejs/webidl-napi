@@ -6,9 +6,12 @@ const path = require('path');
 readdirSync(__dirname).forEach((item) => {
   const testDir = path.join(__dirname, item);
   if (lstatSync(testDir).isDirectory()) {
-    spawnSync('node-gyp', ['rebuild'], {
+    const child = spawnSync('node-gyp', ['rebuild'], {
       cwd: testDir,
       stdio: 'inherit'
     });
+    if (child.signal || child.status != 0) {
+      process.exit(1);
+    }
   }
 });
