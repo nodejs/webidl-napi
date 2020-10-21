@@ -30,53 +30,101 @@ const fs = require('fs');
 const path = require('path');
 
 // Typemap for validating incoming JS parameters.
-const typemapWebIDLToNAPI = {
+const typemapWebIDLBasicTypesToNAPI = {
   // boolean
-  'boolean': 'napi_boolean',
+  'boolean': { type: 'napi_boolean', converter: 'bool' },
 
   // number
-  'byte': 'napi_number',
-  'octet': 'napi_number',
-  'short': 'napi_number',
-  'unsigned short': 'napi_number',
-  'long': 'napi_number',
-  'unsigned long': 'napi_number',
-  'long long': 'napi_number',
-  'unsigned long long': 'napi_number',
-  'float': 'napi_number',
-  'unrestricted float': 'napi_number',
-  'double': 'napi_number',
-  'unrestricted double': 'napi_number',
+  'byte': { type: 'napi_number', converter: 'uint32' },
+  'octet': { type: 'napi_number', converter: 'uint32' },
+  'short': { type: 'napi_number', converter: 'int32' },
+  'unsigned short': { type: 'napi_number', converter: 'uint32' },
+  'long': { type: 'napi_number', converter: 'uint32' },
+  'unsigned long': { type: 'napi_number', converter: 'uint32' },
+  'long long': { type: 'napi_number', converter: 'int64' },
+  'unsigned long long': { type: 'napi_number', converter: 'int64' },
+  'float': { type: 'napi_number', converter: 'double' },
+  'unrestricted float':  { type: 'napi_number', converter: 'double' },
+  'double':  { type: 'napi_number', converter: 'double' },
+  'unrestricted double':  { type: 'napi_number', converter: 'double' },
 
   // string
-  'DOMString': 'napi_string',
-  'ByteString': 'napi_string',
-  'USVString': 'napi_string',
+  'DOMString': { type: 'napi_string', converter: 'DOMString' },
+  'ByteString': { type: 'napi_string', converter: 'ByteString' },
+  'USVString': { type: 'napi_string', converter: 'USVString' },
 
   // object
-  'object': 'napi_object'
+  'object': { type: 'napi_object', converter: 'object' }
 };
 
+function generateForwardDeclaration(decl) {
+  return [
+    `template <>`,
+    `inline napi_status`,
+    `WebIdlNapi::Converter<${decl.name}>::ToNative(`,
+    `    napi_env env,`,
+    `    napi_value val,`,
+    `    ${decl.name}* result);`,
+    ``,
+    `template <>`,
+    `inline napi_status`,
+    `WebIdlNapi::Converter<${decl.name}>::ToJS(`,
+    `    napi_env env,`,
+    `    const ${decl.name}& val,`,
+    `    napi_value* result);`
+  ].join('\n');
+}
+
+function generateBasicTypeMaps(typedef) {
+  const converter =
+    typemapWebIDLBasicTypesToNAPI[generateNativeType(typedef.idlType)]
+      .converter;
+  return [
+    `template <>`,
+    `inline napi_status`,
+    `WebIdlNapi::Converter<${typedef.name}>::ToJS(`,
+    `    napi_env env,`,
+    `    const ${typedef.name}& val,`,
+    `    napi_value* result) {`,
+    `  return WebIdlNapi::Converter<${converter}_t>::ToJS(`,
+    `      env,`,
+    `      static_cast<${converter}_t>(val),`,
+    `      result);`,
+    `}`,
+    ``,
+    `template <>`,
+    `inline napi_status`,
+    `WebIdlNapi::Converter<${typedef.name}>::ToNative(`,
+    `    napi_env env,`,
+    `    napi_value val,`,
+    `    ${typedef.name}* result) {`,
+    `  ${converter}_t res;`,
+    `  napi_status status = WebIdlNapi::Converter<${converter}_t>::ToNative(`,
+    `      env,`,
+    `      val,`,
+    `      &res);`,
+    `  if (status != napi_ok) return status;`,
+    ``,
+    `  *result = static_cast<${typedef.name}>(res);`,
+    `  return napi_ok;`,
+    `}`,
+  ].join('\n');
+}
+
+// Render generics as templated types.
 function generateNativeType(idlType) {
   return ((typeof idlType.idlType === 'string')
     ? idlType.idlType
-    : `${idlType.generic}<${idlType.idlType[0].idlType}>`);
+    : `WebIdlNapi::${idlType.generic}<${idlType.idlType[0].idlType}>`);
 }
 
-function generateConversionToJS(retType, source, destination, indent) {
-  // If it's a templated type, like `Promise<Something>`, use :: for the
-  // converter.
-  const connector = ((typeof retType.idlType === 'object' && !!retType.generic)
-    ? '::'
-    : '_');
-  return [
-    `${generateNativeType(retType)}${connector}toJS(`,
-    `    env,`,
-    `    ${source},`,
-    `    ${destination})`
-  ]
-  .map((item) => (indent + item))
-  .join('\n');
+function generateConverter(idlType) {
+  // If it's a templated type, like `Promise<Something>`, use `::` for the
+  // converter, otherwise use `WebIdlNapi::Converter<type>::`.
+  const ret = ((typeof idlType.idlType === 'object' && !!idlType.generic)
+    ? `${generateNativeType(idlType)}`
+    : `WebIdlNapi::Converter<${generateNativeType(idlType)}>`);
+  return ret;
 }
 
 function generateInitializerList(list, indent) {
@@ -106,13 +154,17 @@ function generateEnumMaps(enumDef) {
     //
     // The conversion to native
     //
-    `static inline napi_status`,
-    `${enumDef.name}_toNative(`,
+    `template <>`,
+    `inline napi_status`,
+    `WebIdlNapi::Converter<${enumDef.name}>::ToNative(`,
     `    napi_env env,`,
     `    napi_value val,`,
     `    ${enumDef.name}* result) {`,
-    `  std::string str_val;`,
-    `  napi_status status = DOMString_toNative(env, val, &str_val);`,
+    `  DOMString str_val;`,
+    `  napi_status status = WebIdlNapi::Converter<DOMString>::ToNative(`,
+    `      env,`,
+    `      val,`,
+    `      &str_val);`,
     `  if (status != napi_ok) return status;`,
     ``,
     // Generate an if-statement for each possible enum value, and one for the
@@ -131,10 +183,11 @@ function generateEnumMaps(enumDef) {
     //
     // The conversion to JS
     //
-    `static inline napi_status`,
-    `${enumDef.name}_toJS(`,
+    `template <>`,
+    `inline napi_status`,
+    `WebIdlNapi::Converter<${enumDef.name}>::ToJS(`,
     `    napi_env env,`,
-    `    ${enumDef.name} val,`,
+    `    const ${enumDef.name}& val,`,
     `    napi_value* result) {`,
     `  napi_status status = napi_ok;`,
     ``,
@@ -159,8 +212,9 @@ function generateEnumMaps(enumDef) {
 
 function generateDictionaryMaps(dict) {
   return [
-  `static inline napi_status`,
-  `${dict.name}_toNative(`,
+  `template <>`,
+  `inline napi_status`,
+  `WebIdlNapi::Converter<${dict.name}>::ToNative(`,
   `    napi_env env,`,
   `    napi_value val,`,
   `    ${dict.name}* result) {`,
@@ -174,7 +228,7 @@ function generateDictionaryMaps(dict) {
     `        &js_member);`,
     `    if (status != napi_ok) return status;`,
     ``,
-    `    status = ${member.idlType.idlType}_toNative(`,
+    `    status = ${generateConverter(member.idlType)}::ToNative(`,
     `        env,`,
     `        js_member,`,
     `        &(result->${member.name}));`,
@@ -184,10 +238,11 @@ function generateDictionaryMaps(dict) {
   `  return napi_ok;`,
   `}`,
   ``,
-  `static inline napi_status`,
-  `${dict.name}_toJS(`,
+  `template <>`,
+  `inline napi_status`,
+  `WebIdlNapi::Converter<${dict.name}>::ToJS(`,
   `    napi_env env,`,
-  `    ${dict.name}* val,`,
+  `    const ${dict.name}& val,`,
   `    napi_value* result) {`,
   `  napi_status status;`,
   `  napi_value ret;`,
@@ -198,9 +253,9 @@ function generateDictionaryMaps(dict) {
   // Create a statement that converts from the native type of the native member
   // to a `napi_value`, stored in `js_prop_0`, ...
   ...dict.members.reduce((soFar, member, idx) => soFar.concat([
-    `  status = ${member.idlType.idlType}_toJS(`,
+    `  status = ${generateConverter(member.idlType)}::ToJS(`,
     `      env,`,
-    `      val->${member.name},`,
+    `      val.${member.name},`,
     `      &js_prop_${idx});`,
     `  if (status != napi_ok) return status;`,
     ``
@@ -240,14 +295,14 @@ function generateDictionaryMaps(dict) {
 }
 
 // Create an initializer list for signature candidates that will be processed by
-// `webidl_napi_pick_signature()`. It may look like this:
+// `WebIdlNapi::PickSignature()`. It may look like this:
 // { { true, { napi_number, object } }, { true, { napi_string, napi_object } }
 function generateSigCandidates(sigs) {
   return generateInitializerList(
     sigs.map((sig) => [
       true,
       sig.arguments.map((arg) =>
-        typemapWebIDLToNAPI[generateNativeType(arg.idlType)])
+        typemapWebIDLBasicTypesToNAPI[generateNativeType(arg.idlType)].type)
     ]), '          ');
 }
 
@@ -270,14 +325,14 @@ function generateParamRetrieval(sigs, maxArgs) {
     // which one the JS is trying to call, and then generate the code that
     // assigns the result to `sig_idx`.
     ...(sigs.length > 1 ? [
-    `  NAPI_CALL(`,
-    `      env,`,
-    `      webidl_napi_pick_signature(`,
-    `          env,`,
-    `          argc,`,
-    `          argv,`,
-    `${generateSigCandidates(sigs)},`,
-    `          &sig_idx));`,
+      `  NAPI_CALL(`,
+      `      env,`,
+      `      WebIdlNapi::PickSignature(`,
+      `          env,`,
+      `          argc,`,
+      `          argv,`,
+      `${generateSigCandidates(sigs)},`,
+      `          &sig_idx));`,
     ] : []),
     // TODO(gabrielschulhof): What if, upon return, argc is greater than maxArgs?
   ].join('\n');
@@ -288,36 +343,34 @@ function generateCall(ifname, sig, indent) {
     return [
       `NAPI_CALL(`,
       `    env,`,
-      `    ${idlType}_toNative(env,`,
+      `    ${generateConverter(idlType)}::ToNative(env,`,
       `        argv[${index}],`,
       `        &native_arg_${index}));`,
     ].map((item) => (indent + item));
   }
   return [
     // Convert arguments to native data types. This assumes that the DOM type
-    // is a real C++ type and that a function of the name `DOMType_toNative`
-    // exists.
+    // is a real C++ type and that a function named
+    // `WebIdl::Converter<DOM type>::ToNative` exists.
     ...sig.arguments.reduce((soFar, arg, index) => soFar.concat([
       `${generateNativeType(arg.idlType)} native_arg_${index};`,
       // If the argument is optional, we check that we have it first.
-      ...(arg.optional
-        ? [
-            `bool have_arg_${index} = false;`,
-            `{`,
-            `  napi_valuetype val_type;`,
-            `  NAPI_CALL(`,
-            `      env,`,
-            `      napi_typeof(`,
-            `          env,`,
-            `          argv[${index}],`,
-            `          &val_type));`,
-            `  have_arg_${index} = (val_type != napi_undefined);`,
-            `}`,
-            `if (have_arg_${index}) {`,
-            ...argToNativeCall(arg.idlType.idlType, index, '  '),
-            `}`,
-          ]
-        : argToNativeCall(arg.idlType.idlType, index, '')),
+      ...(arg.optional ? [
+        `bool have_arg_${index} = false;`,
+        `{`,
+        `  napi_valuetype val_type;`,
+        `  NAPI_CALL(`,
+        `      env,`,
+        `      napi_typeof(`,
+        `          env,`,
+        `          argv[${index}],`,
+        `          &val_type));`,
+        `  have_arg_${index} = (val_type != napi_undefined);`,
+        `}`,
+        `if (have_arg_${index}) {`,
+        ...argToNativeCall(arg.idlType, index, '  '),
+        `}`,
+      ] : argToNativeCall(arg.idlType, index, '')),
     ]), []),
     ``,
     // If there's a return value, assign it to a variable.
@@ -367,7 +420,10 @@ function generateIfaceOperation(ifname, opname, sigs) {
     ...(hasReturn ? [
       `  NAPI_CALL(`,
       `      env,`,
-      `${generateConversionToJS(retType, 'ret', '&js_ret', '      ')});`,
+      `      ${generateConverter(retType)}::ToJS(`,
+      `          env,`,
+      `          ret,`,
+      `          &js_ret));`,
     ] : []),
     `  return js_ret;`,
     `}`
@@ -375,6 +431,7 @@ function generateIfaceOperation(ifname, opname, sigs) {
 }
 
 function generateIfaceInit(ifname, ops) {
+  const opCount = Object.keys(ops).length;
   return [
     // Generate the constructor for the JS class.
     `static napi_value`,
@@ -389,23 +446,25 @@ function generateIfaceInit(ifname, ops) {
     `webidl_napi_create_interface_${ifname}(`,
     `    napi_env env,`,
     `    napi_value* result) {`,
-    `  napi_property_descriptor props[] =`,
-    generateInitializerList(Object
-      .keys(ops)
-      .map((opname) => ([
-        `"${opname}"`,
-        `nullptr`,
-        `webidl_napi_interface_${ifname}_${opname}`,
-        `nullptr`,
-        `nullptr`,
-        `nullptr`,
-        `static_cast<napi_property_attributes>(` + [
-          'napi_enumerable',
-          // Or in `napi_static` for static methods.
-          ...(ops[opname][0].special === 'static' ? [ 'napi_static' ] : [])
-        ].join(' | ') + ')',
-        `nullptr`
-      ])), '    ') + ';',
+    ...((opCount > 0) ? [
+      `  napi_property_descriptor props[] =`,
+      generateInitializerList(Object
+        .keys(ops)
+        .map((opname) => ([
+          `"${opname}"`,
+          `nullptr`,
+          `webidl_napi_interface_${ifname}_${opname}`,
+          `nullptr`,
+          `nullptr`,
+          `nullptr`,
+          `static_cast<napi_property_attributes>(` + [
+            'napi_enumerable',
+            // Or in `napi_static` for static methods.
+            ...(ops[opname][0].special === 'static' ? [ 'napi_static' ] : [])
+          ].join(' | ') + ')',
+          `nullptr`
+        ])), '    ') + ';',
+      ] : []),
     '',
     `  return napi_define_class(`,
     `      env,`,
@@ -413,8 +472,13 @@ function generateIfaceInit(ifname, ops) {
     `      NAPI_AUTO_LENGTH,`,
     `      webidl_napi_interface_${ifname}_constructor,`,
     `      nullptr,`,
-    `      sizeof(props) / sizeof(*props),`,
-    `      props,`,
+    ...((opCount > 0) ? [
+      `      sizeof(props) / sizeof(*props),`,
+      `      props,`,
+    ] : [
+      `      0,`,
+      `      nullptr,`,
+    ]),
     `      result);`,
     `}`
   ].join('\n');
@@ -432,9 +496,11 @@ function generateIface(iface) {
 
   return [
     [
-      '////////////////////////////////////////////////////////////////////////////////',
+      `//////////////////////////////////////////////////////////////////////` +
+        '//////////',
       `// Interface ${iface.name}`,
-      '////////////////////////////////////////////////////////////////////////////////'
+      `//////////////////////////////////////////////////////////////////////` +
+        `//////////`
     ].join('\n'),
     // Object.entries() turns the operations as collapsed by name back into an
     // array of [opname, sigs] tuples, each of which we pass to
@@ -458,10 +524,10 @@ function generateInit(tree, moduleName) {
   const interfaces = tree.filter((item) => (item.type === 'interface'));
 
   return [
-    `/////////////////////////////////////////////////////////////////////////`,
+    `/////////////////////////////////////////////////////////////////////////` +
       `///////`,
     `// Init module \`${moduleName}\``,
-    `/////////////////////////////////////////////////////////////////////////`,
+    `/////////////////////////////////////////////////////////////////////////` +
       `///////`,
     ``,
     `napi_value`,
@@ -519,16 +585,84 @@ const tree = parse(file);
 const parsedPath = path.parse(argv._[0]);
 const outputFile = argv.o || parsedPath.name + '.cc';
 
+// Save the interfaces as an object with properties keyed on the interface name.
+const ifaces = tree.reduce((soFar, item) => Object.assign(soFar,
+  (item.type === 'interface' && item.partial === false)
+    ? { [item.name]: item }
+    : {}), {});
+
+// Save the mixins as an object with properties keyed on the mixin name.
+const mixins = tree.reduce((soFar, item) => Object.assign(soFar,
+  (item.type === 'interface mixin') ? { [item.name]: item } : {}), {});
+
+const partials = tree.filter((item) =>
+  (item.type === 'interface' && item.partial === true));
+const includes = tree.filter((item) => (item.type === 'includes'));
+
+// Save the dictionaries as an object with properties keyed on the dictionary
+// name.
+const dicts = tree.reduce((soFar, item) => Object.assign(soFar,
+  (item.type === 'dictionary') ? { [item.name]: item } : {}), {});
+
+// Split up typedefs by whether they have a pre-defined converter.
+const { basicTypedefs, extendedTypedefs } = tree.reduce((soFar, item) => {
+  if (item.type === 'typedef') {
+    if (item.idlType.idlType in typemapWebIDLBasicTypesToNAPI) {
+      soFar.basicTypedefs.push(item);
+    } else {
+      soFar.extendedTypedefs.push(item);
+    }
+  }
+  return soFar;
+}, { basicTypedefs: [], extendedTypedefs: [] });
+
+const enums = tree.filter((item) => (item.type === 'enum'));
+
+// Merge inherited dictionaries into their parents.
+Object.values(dicts).forEach((dict) => {
+  if (dict.inheritance) {
+    if (!dicts[dict.inheritance]) {
+      throw new Error(`Cannot find dictionary ${dict.inheritance} which is ` +
+        `inherited by dictionary ${dict.name}`);
+    }
+    dict.members.concat(dicts[dict.inheritance].members);
+  }
+});
+
+// Merge all mixins into existing interfaces.
+includes.forEach((include) => {
+  if (!ifaces[include.target] && mixins[include.includes]) {
+    throw new Error(`Cannot include ${include.includes} into ` +
+      `${include.target} because the latter was not found`);
+  }
+  ifaces[include.target].members.concat(mixins[include.includes].members);
+});
+
+// Unlike mixins, partials do not require that an interface also be declared.
+partials.forEach((partial) => {
+  if (ifaces[partial.name]) {
+    ifaces[partial.name].members.concat(partial.members);
+  } else {
+    ifaces[partial.name] = partial;
+  }
+});
+
+const dictionaries = Object.values(dicts);
+const interfaces = Object.values(ifaces);
+
 fs.writeFileSync(outputFile, [
   [
     argv.n,
-    'webidl-napi-inl.h',
+    'webidl-napi.h',
     // If the user requested extra includes, add them as `#include "extra-include.h"`.
     // argv.i may be absent, may be a string, or it may be an array.
     ...(argv.i ? (typeof argv.i === 'string' ? [ argv.i ] : argv.i) : [])
   ].map((item) => `#include "${item}"`).join('\n'),
-  ...tree.filter((item) => (item.type === 'enum')).map(generateEnumMaps),
-  ...tree.filter((item) => (item.type === 'dictionary')).map(generateDictionaryMaps),
-  ...tree.filter((item) => (item.type === 'interface')).map(generateIface),
+  ...[...basicTypedefs, ...enums, ...dictionaries, ...interfaces]
+    .map(generateForwardDeclaration),
+  ...enums.map(generateEnumMaps),
+  ...basicTypedefs.map(generateBasicTypeMaps),
+  ...dictionaries.map(generateDictionaryMaps),
+  ...interfaces.map(generateIface),
   generateInit(tree, parsedPath.name)
 ].join('\n\n') + '\n');
