@@ -1,3 +1,21 @@
+interface mixin GPUObjectBase {
+    attribute USVString? label;
+};
+
+dictionary GPUObjectDescriptorBase {
+    USVString label;
+};
+
+[Exposed=Window]
+partial interface Navigator {
+    [SameObject] readonly attribute GPU gpu;
+};
+
+[Exposed=DedicatedWorker]
+partial interface WorkerNavigator {
+    [SameObject] readonly attribute GPU gpu;
+};
+
 [Exposed=(Window, DedicatedWorker)]
 interface GPU {
     Promise<GPUAdapter?> requestAdapter(optional GPURequestAdapterOptions options = {});
@@ -11,3 +29,39 @@ enum GPUPowerPreference {
     "low-power",
     "high-performance"
 };
+
+interface GPUAdapter {
+    readonly attribute DOMString name;
+    readonly attribute FrozenArray<GPUExtensionName> extensions;
+    //readonly attribute GPULimits limits; Don\u2019t expose higher limits for now.
+
+    Promise<GPUDevice?> requestDevice(optional GPUDeviceDescriptor descriptor = {});
+};
+
+dictionary GPUDeviceDescriptor : GPUObjectDescriptorBase {
+    sequence<GPUExtensionName> extensions = [];
+    GPULimits limits = {};
+};
+
+enum GPUExtensionName {
+    "depth-clamping",
+    "depth24unorm-stencil8",
+    "depth32float-stencil8",
+    "pipeline-statistics-query",
+    "texture-compression-bc",
+    "timestamp-query",
+};
+
+dictionary GPULimits {
+    GPUSize32 maxBindGroups = 4;
+    GPUSize32 maxDynamicUniformBuffersPerPipelineLayout = 8;
+    GPUSize32 maxDynamicStorageBuffersPerPipelineLayout = 4;
+    GPUSize32 maxSampledTexturesPerShaderStage = 16;
+    GPUSize32 maxSamplersPerShaderStage = 16;
+    GPUSize32 maxStorageBuffersPerShaderStage = 4;
+    GPUSize32 maxStorageTexturesPerShaderStage = 4;
+    GPUSize32 maxUniformBuffersPerShaderStage = 12;
+    GPUSize32 maxUniformBufferBindingSize = 16384;
+};
+
+typedef [EnforceRange] unsigned long GPUSize32;
