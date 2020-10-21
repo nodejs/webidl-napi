@@ -2,9 +2,17 @@
 #define WEBIDL_NAPI_INL
 
 #include <string.h>
+#include <string>
 #include <memory>
 #include <vector>
+
+// TODO(gabrielschulhof): Once we no longer support Node.js 10, we can
+// unconditionally switch to the js_native_api.h header.
+#if defined(BUILDING_NODE_EXTENSION)
+#include "node_api.h"
+#else
 #include "js_native_api.h"
+#endif
 
 // Empty value so that macros here are able to return NULL or void
 #define NAPI_RETVAL_NOTHING  // Intentionally blank #define
@@ -48,7 +56,7 @@
   NAPI_CALL_BASE(env, the_call, NAPI_RETVAL_NOTHING)
 
 struct webidl_sig {
-  bool candidate = true;
+  bool candidate;
   std::vector<napi_valuetype> sig;
 };
 
