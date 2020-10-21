@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include "js_native_api.h"
 #include "example-impl.h"
 
 std::string WebIDLCompiler::compile(const std::string& string) {
@@ -7,7 +6,7 @@ std::string WebIDLCompiler::compile(const std::string& string) {
   return std::string("compile a string");
 }
 
-std::string WebIDLCompiler::compile(napi_value dataTree) {
+std::string WebIDLCompiler::compile(object dataTree) {
   fprintf(stderr, "WebIDLCompiler::compile(%p);\n", dataTree);
   return std::string("compile an object");
 }

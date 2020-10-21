@@ -2,12 +2,12 @@
 #define WEBIDL_NAPI_TEST_WEBIDL2_EXAMPLE_EXAMPLE_IMPL_H
 
 #include <string>
-#include "js_native_api.h"
+#include "webidl-napi-inl.h"
 
 class WebIDLCompiler {
  public:
   static std::string compile(const std::string& string);
-  static std::string compile(napi_value dataTree);
+  static std::string compile(object dataTree);
 };
 
 class WebIDL {

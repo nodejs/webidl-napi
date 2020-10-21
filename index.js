@@ -3,14 +3,16 @@
 
 const yargs = require('yargs');
 const argv = yargs
-  .nargs('o', 1)
-  .describe('o', 'output file')
   .help('h')
   .alias('h', 'help')
+  .usage('Usage: $0 [options] filename.idl')
   .describe('I', 'print include directory and exit')
   .describe('i', 'add #include after js_native_api.h')
   .nargs('i', 1)
-  .usage('Usage: $0 [options] filename.idl')
+  .describe('n', 'N-API include file')
+  .default('n', 'js_native_api.h')
+  .nargs('o', 1)
+  .describe('o', 'output file')
   .argv;
 
 if (argv._.length === 0) {
@@ -519,7 +521,7 @@ const outputFile = argv.o || parsedPath.name + '.cc';
 
 fs.writeFileSync(outputFile, [
   [
-    'js_native_api.h',
+    argv.n,
     'webidl-napi-inl.h',
     // If the user requested extra includes, add them as `#include "extra-include.h"`.
     // argv.i may be absent, may be a string, or it may be an array.
