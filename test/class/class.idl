@@ -1,0 +1,6 @@
+interface JSClassExample {
+  constructor();
+  constructor(unsigned long initial);
+  constructor(DOMString initial);
+  unsigned long increment();
+};

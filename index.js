@@ -310,16 +310,26 @@ function generateParamRetrieval(sigs, maxArgs) {
   return [
     // We declare variable `sig_idx` only if there are multiple signatures.
     ...(sigs.length > 1 ? [ `  int sig_idx = -1;` ] : []),
-    `  napi_value argv[${maxArgs}];`,
-    `  size_t argc = ${maxArgs};`,
+    // Declare `argv` and `argc` only if we have arguments.
+    ...(maxArgs > 0 ? [
+      `  size_t argc = ${maxArgs};`,
+      `  napi_value argv[${maxArgs}];`,
+    ] : []),
+    `  napi_value js_rcv;`,
     `  NAPI_CALL(`,
     `      env,`,
     `      napi_get_cb_info(`,
     `          env,`,
     `          info,`,
-    `          &argc,`,
-    `          argv,`,
-    `          nullptr,`,
+    // Pass `nullptr`s if we have no arguments.
+    ...(maxArgs > 0 ? [
+      `          &argc,`,
+      `          argv,`,
+    ] : [
+      `          nullptr,`,
+      `          nullptr,`,
+    ]),
+    `          &js_rcv,`,
     `          nullptr));`,
     // If we have multiple signatures, let's generate the code to figure out
     // which one the JS is trying to call, and then generate the code that
@@ -343,7 +353,8 @@ function generateCall(ifname, sig, indent) {
     return [
       `NAPI_CALL(`,
       `    env,`,
-      `    ${generateConverter(idlType)}::ToNative(env,`,
+      `    ${generateConverter(idlType)}::ToNative(`,
+      `        env,`,
       `        argv[${index}],`,
       `        &native_arg_${index}));`,
     ].map((item) => (indent + item));
@@ -373,14 +384,51 @@ function generateCall(ifname, sig, indent) {
       ] : argToNativeCall(arg.idlType, index, '')),
     ]), []),
     ``,
-    // If there's a return value, assign it to a variable.
-    ((sig.idlType && sig.idlType.type === 'return-type')
-      ? 'ret = '
-      : '') + `${ifname}::${sig.name}(` +
+    // If this is not a static method or a constructor, declare and retrieve the
+    // native instance `cc_rcv` corresponding to the JS instance in `js_rcv`.
+    ...((sig.special !== 'static' && sig.type != 'constructor') ? [
+      `void* cc_rcv_raw;`,
+      `${ifname}* cc_rcv;`,
+      `NAPI_CALL(`,
+      `    env,`,
+      `    napi_unwrap(`,
+      `        env,`,
+      `        js_rcv,`,
+      `        &cc_rcv_raw));`,
+      `cc_rcv = static_cast<${ifname}*>(cc_rcv_raw);`,
+      ``
+    ] : []),
+    // A constructor has no return value, but we can hold the new instance in
+    // such a variable if this is a constructor.
+    ...(sig.type === 'constructor' ? [ `${ifname}* ret;` ] : []),
+    // If there's a return value or this is a constructor, assign it to a
+    // variable.
+    (((sig.idlType && sig.idlType.type === 'return-type') ||
+        sig.type === 'constructor') ? 'ret = ' : '') +
+      // If it's a static method, call via `ifname::methodname(...)`. Otherwise,
+      // if it's a constructor, call via `new ifname(...)`. Finally, if it's an
+      // instance method, call via `cc_rcv->methodname(...)`.
+      (sig.special === 'static'
+        ? `${ifname}::`
+        : (sig.type === 'constructor'
+          ? `new ${ifname}`
+          : 'cc_rcv->')) + (sig.type === 'constructor' ? '' : sig.name) + `(` +
         // Generate the arguments: native_arg_0, native_arg_1, ...
         Array.apply(0, Array(sig.arguments.length))
           .map((item, idx) => `native_arg_${idx}`).join(', ') +
       ');',
+      // If this is a constructor, we created the new instance above. Let's wrap
+      // it into the JS object we're constructing.
+      ...(sig.type === 'constructor' ? [
+        `NAPI_CALL(env,`,
+        `    napi_wrap(`,
+        `        env,`,
+        `        js_rcv,`,
+        `        static_cast<void*>(ret),`,
+        `        &WebIdlNapi::ObjectWrapDestructor<${ifname}>,`,
+        `        nullptr,`,
+        `        nullptr));`
+      ] : []),
     ``
   ]
   .map((item) => ((item == '') ? item : (indent + item)))
@@ -388,6 +436,15 @@ function generateCall(ifname, sig, indent) {
 }
 
 function generateIfaceOperation(ifname, opname, sigs) {
+  if (sigs.length === 0) {
+    // If we have no signatures, generate a trivial one.
+    sigs = [ {
+      ...(opname === 'constructor' ? {} : { name: opname }),
+      type: (opname === 'constructor' ? 'constructor' : 'operation'),
+      arguments: [],
+      special: ''
+    } ];
+  }
   const maxArgs =
     sigs.reduce((soFar, item) => Math.max(soFar, item.arguments.length), 0);
   const retType = sigs[0].idlType;
@@ -398,14 +455,26 @@ function generateIfaceOperation(ifname, opname, sigs) {
     `webidl_napi_interface_${ifname}_${opname}(`,
     `    napi_env env,`,
     `    napi_callback_info info) {`,
+    ...(opname === 'constructor' ? [
+      `  bool is_construct_call;`,
+      `  NAPI_CALL(env,`,
+      `      WebIdlNapi::IsConstructCall(`,
+      `          env,`,
+      `          info,`,
+      `          "${ifname}",`,
+      `          &is_construct_call));`,
+      `  if (!is_construct_call) return nullptr;`,
+      ``
+    ] : []),
     `  napi_value js_ret = nullptr;`,
-    // If we have args, then generate the arg retrieval code, and decide which
-    // signature to call.
-    ...((maxArgs === 0) ? [] : [ generateParamRetrieval(sigs, maxArgs) ]),
+    // If we have args or the method is not static then generate the arg
+    // retrieval code and decide which signature to call.
+    ...((maxArgs > 0 || sigs[0].special === '') ? [
+      generateParamRetrieval(sigs, maxArgs)
+    ] : []),
     // If we have a return value, declare the variable that stores the return
     // value from the call to the native function.
     ...(hasReturn ? [ `  ${generateNativeType(retType)} ret;` ] : []),
-    ``,
     // If we have multiple signatures we generate calls for each signature and
     // choose at runtime which overload to call via an `if ... else if ...`.
     ...(sigs.length > 1
@@ -433,14 +502,6 @@ function generateIfaceOperation(ifname, opname, sigs) {
 function generateIfaceInit(ifname, ops) {
   const opCount = Object.keys(ops).length;
   return [
-    // Generate the constructor for the JS class.
-    `static napi_value`,
-    `webidl_napi_interface_${ifname}_constructor(`,
-    `    napi_env env,`,
-    `    napi_callback_info info) {`,
-    `  return nullptr;`,
-    `}`,
-    ``,
     // Generate the init method that defines the JS class.
     `static inline napi_status`,
     `webidl_napi_create_interface_${ifname}(`,
@@ -494,6 +555,9 @@ function generateIface(iface) {
       [item.name]: [...(soFar[item.name] || []), item ]
     }), {});
 
+  const collapsedCtors =
+    iface.members.filter((item) => (item.type === 'constructor'))
+
   return [
     [
       `//////////////////////////////////////////////////////////////////////` +
@@ -506,6 +570,7 @@ function generateIface(iface) {
     // array of [opname, sigs] tuples, each of which we pass to
     // `generateIfaceOperation`. That way, only one binding is generated for all
     // signatures of an operation.
+    generateIfaceOperation(iface.name, 'constructor', collapsedCtors),
     ...Object.entries(collapsedOps).map(([opname, sigs]) =>
       generateIfaceOperation(iface.name, opname, sigs)),
     generateIfaceInit(iface.name, collapsedOps)
@@ -605,16 +670,9 @@ const dicts = tree.reduce((soFar, item) => Object.assign(soFar,
   (item.type === 'dictionary') ? { [item.name]: item } : {}), {});
 
 // Split up typedefs by whether they have a pre-defined converter.
-const { basicTypedefs, extendedTypedefs } = tree.reduce((soFar, item) => {
-  if (item.type === 'typedef') {
-    if (item.idlType.idlType in typemapWebIDLBasicTypesToNAPI) {
-      soFar.basicTypedefs.push(item);
-    } else {
-      soFar.extendedTypedefs.push(item);
-    }
-  }
-  return soFar;
-}, { basicTypedefs: [], extendedTypedefs: [] });
+const extendedTypedefs = tree.filter((item) =>
+  (item.type === 'typedef' &&
+    !item.idlType.idlType in typemapWebIDLBasicTypesToNAPI));
 
 const enums = tree.filter((item) => (item.type === 'enum'));
 
@@ -658,10 +716,9 @@ fs.writeFileSync(outputFile, [
     // argv.i may be absent, may be a string, or it may be an array.
     ...(argv.i ? (typeof argv.i === 'string' ? [ argv.i ] : argv.i) : [])
   ].map((item) => `#include "${item}"`).join('\n'),
-  ...[...basicTypedefs, ...enums, ...dictionaries, ...interfaces]
+  ...[...enums, ...dictionaries, ...interfaces]
     .map(generateForwardDeclaration),
   ...enums.map(generateEnumMaps),
-  ...basicTypedefs.map(generateBasicTypeMaps),
   ...dictionaries.map(generateDictionaryMaps),
   ...interfaces.map(generateIface),
   generateInit(tree, parsedPath.name)
