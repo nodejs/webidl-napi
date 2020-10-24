@@ -70,72 +70,40 @@ namespace WebIdlNapi {
 template <typename T>
 class Converter {
  public:
-  static inline napi_status ToNative(napi_env env,
-                                     napi_value value,
-                                     T* result);
-  static inline napi_status ToJS(napi_env env,
-                                 const T& value,
-                                 napi_value* result);
+  static napi_status ToNative(napi_env env,
+                              napi_value value,
+                              T* result);
+  static napi_status ToJS(napi_env env,
+                          const T& value,
+                          napi_value* result);
 };
 
 
-static inline napi_status
+static napi_status
 PickSignature(napi_env env,
               size_t argc,
               napi_value* argv,
               std::vector<webidl_sig> sigs,
-              int* sig_idx) {
-
-  // Advance through the signatures one argument type at a time and mark those
-  // as non-candidates whose signature does not correspond to the sequence of
-  // argument types found in the actual arguments.
-  for (size_t idx = 0; idx < argc; idx++) {
-    napi_valuetype val_type;
-    napi_status status = napi_typeof(env, argv[idx], &val_type);
-    if (status != napi_ok) return status;
-    for (auto& sig: sigs)
-      if (sig.candidate)
-        if (idx >= sig.sig.size() || sig.sig[idx] != val_type)
-          sig.candidate = false;
-  }
-
-  // If any signatures are left marked as candidates, return the first one. We
-  // do not touch `sig_idx` if we do not find a candidate, so the caller can set
-  // it to -1 to be informed after this call completes that no candidate was
-  // found.
-  for (size_t idx = 0; idx < sigs.size(); idx++)
-    if (sigs[idx].candidate) {
-      *sig_idx = idx;
-      break;
-    }
-
-  return napi_ok;
-}
+              int* sig_idx);
 
 template <typename T>
 class Promise {
  public:
-  static inline napi_status
-  ToJS(napi_env env, const Promise<T>& promise, napi_value* val) {
-    return napi_ok;
-  }
-  static inline napi_status
-  ToNative(napi_env env, napi_value value, Promise<T>* promise) {
-    return napi_ok;
-  }
+  static napi_status ToJS(napi_env env,
+                          const Promise<T>& promise,
+                          napi_value* val);
+  static napi_status ToNative(napi_env env,
+                              napi_value value,
+                              Promise<T>* promise);
 };
 
-template <typename WebIdlNapiType>
+template <typename T>
 class sequence {
  public:
-  static inline napi_status
-  ToJS(napi_env env, const sequence<WebIdlNapiType>& seq, napi_value* val) {
-    return napi_ok;
-  }
-  static inline napi_status
-  ToNative(napi_env env, napi_value val, sequence<WebIdlNapiType>* result) {
-    return napi_ok;
-  }
+  static napi_status
+  ToJS(napi_env env, const sequence<T>& seq, napi_value* val);
+  static napi_status
+  ToNative(napi_env env, napi_value val, sequence<T>* result);
 };
 
 }  // end of namespace WebIdlNapi
