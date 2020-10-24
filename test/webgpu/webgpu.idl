@@ -65,3 +65,6 @@ dictionary GPULimits {
 };
 
 typedef [EnforceRange] unsigned long GPUSize32;
+
+interface GPUDevice {
+};

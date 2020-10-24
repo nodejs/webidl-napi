@@ -1,0 +1,7 @@
+dictionary FulfillsPromise {
+  DOMString name;
+};
+
+interface ReturnsPromise {
+  Promise<FulfillsPromise?> requestPromise(DOMString name);
+};

@@ -58,14 +58,14 @@ const typemapWebIDLBasicTypesToNAPI = {
 function generateForwardDeclaration(decl) {
   return [
     `template <>`,
-    `inline napi_status`,
+    `napi_status`,
     `WebIdlNapi::Converter<${decl.name}>::ToNative(`,
     `    napi_env env,`,
     `    napi_value val,`,
     `    ${decl.name}* result);`,
     ``,
     `template <>`,
-    `inline napi_status`,
+    `napi_status`,
     `WebIdlNapi::Converter<${decl.name}>::ToJS(`,
     `    napi_env env,`,
     `    const ${decl.name}& val,`,
@@ -79,7 +79,7 @@ function generateBasicTypeMaps(typedef) {
       .converter;
   return [
     `template <>`,
-    `inline napi_status`,
+    `napi_status`,
     `WebIdlNapi::Converter<${typedef.name}>::ToJS(`,
     `    napi_env env,`,
     `    const ${typedef.name}& val,`,
@@ -91,7 +91,7 @@ function generateBasicTypeMaps(typedef) {
     `}`,
     ``,
     `template <>`,
-    `inline napi_status`,
+    `napi_status`,
     `WebIdlNapi::Converter<${typedef.name}>::ToNative(`,
     `    napi_env env,`,
     `    napi_value val,`,
@@ -153,7 +153,7 @@ function generateEnumMaps(enumDef) {
     // The conversion to native
     //
     `template <>`,
-    `inline napi_status`,
+    `napi_status`,
     `WebIdlNapi::Converter<${enumDef.name}>::ToNative(`,
     `    napi_env env,`,
     `    napi_value val,`,
@@ -182,7 +182,7 @@ function generateEnumMaps(enumDef) {
     // The conversion to JS
     //
     `template <>`,
-    `inline napi_status`,
+    `napi_status`,
     `WebIdlNapi::Converter<${enumDef.name}>::ToJS(`,
     `    napi_env env,`,
     `    const ${enumDef.name}& val,`,
@@ -211,7 +211,7 @@ function generateEnumMaps(enumDef) {
 function generateDictionaryMaps(dict) {
   return [
   `template <>`,
-  `inline napi_status`,
+  `napi_status`,
   `WebIdlNapi::Converter<${dict.name}>::ToNative(`,
   `    napi_env env,`,
   `    napi_value val,`,
@@ -237,7 +237,7 @@ function generateDictionaryMaps(dict) {
   `}`,
   ``,
   `template <>`,
-  `inline napi_status`,
+  `napi_status`,
   `WebIdlNapi::Converter<${dict.name}>::ToJS(`,
   `    napi_env env,`,
   `    const ${dict.name}& val,`,
@@ -274,9 +274,7 @@ function generateDictionaryMaps(dict) {
   ``,
   // Create the object that will hold the properties, assign the properties, and
   // return the object by assigning it to `*result`.
-  `  status = napi_create_object(`,
-  `      env,`,
-  `      &ret);`,
+  `  status = napi_create_object(env, &ret);`,
   `  if (status != napi_ok) return status;`,
   ``,
   `  status = napi_define_properties(`,
@@ -463,6 +461,12 @@ function generateCall(ifname, sig, indent) {
         `        nullptr,`,
         `        nullptr));`
       ] : []),
+      // Special handling for promises. We need to call `Conclude()` before
+      // returning to JS to at least create the `napi_deferred` and even resolve
+      // it if the `Promise<T>` was already resolved on the native side.
+      ...((sig.type != 'constructor' && sig.idlType.generic === 'Promise')
+        ? [ `NAPI_CALL(env, ret.Conclude(env));` ]
+        : []),
     ``
   ]
   .map((item) => ((item == '') ? item : (indent + item)))
@@ -540,11 +544,70 @@ function generateIfaceOperation(ifname, opname, sigs) {
   ].join('\n');
 }
 
-function generateIfaceInit(ifname, ops) {
+function generateIfaceAttribute(ifname, attribute) {
+  const nativeAttributeType = generateNativeType(attribute.idlType);
+  function generateAccessor(slug) {
+    return [
+      `static napi_value`,
+      `webidl_napi_interface_${ifname}_${slug}_${attribute.name}(`,
+      `    napi_env env,`,
+      `    napi_callback_info info) {`,
+      `  napi_value js_rcv;`,
+      `  napi_value result = nullptr;`,
+      ...(slug === 'set' ? [
+        `  napi_value js_new;`,
+        `  size_t argc = 1;`,
+      ] : []),
+      `  NAPI_CALL(env,`,
+      `      napi_get_cb_info(env,`,
+      `          info,`,
+      ...(slug === 'set' ? [
+        `          &argc,`,
+        `          &js_new,`,
+      ] : [
+        `          nullptr,`,
+        `          nullptr,`,
+      ]),
+      `          &js_rcv,`,
+      `          nullptr));`,
+      ``,
+      `  void* raw_data;`,
+      `  NAPI_CALL(env, napi_unwrap(env, js_rcv, &raw_data));`,
+      `  ${ifname}* cc_rcv = static_cast<${ifname}*>(raw_data);`,
+      ``,
+      ...(slug === 'set' ? [
+        `  NAPI_CALL(`,
+        `      env,`,
+        `      ${generateConverter(attribute.idlType)}::ToNative(`,
+        `          env,`,
+        `          js_new,`,
+        `          &(cc_rcv->${attribute.name})));`,
+      ] : [
+        `  NAPI_CALL(`,
+        `      env,`,
+        `      ${generateConverter(attribute.idlType)}::ToJS(`,
+        `          env,`,
+        `          cc_rcv->${attribute.name},`,
+        `          &result));`,
+      ]),
+      `  return result;`,
+      `}`,
+    ];
+  }
+  return [
+    ...generateAccessor('get'),
+    ...(attribute.readonly ? [] : [
+      ``,
+      ...generateAccessor('set')
+    ]),
+  ].join('\n');
+}
+
+function generateIfaceInit(ifname, ops, attributes) {
   const opCount = Object.keys(ops).length;
   return [
     // Generate the init method that defines the JS class.
-    `static inline napi_status`,
+    `static napi_status`,
     `webidl_napi_create_interface_${ifname}(`,
     `    napi_env env,`,
     `    napi_value* result) {`,
@@ -554,22 +617,36 @@ function generateIfaceInit(ifname, ops) {
     `  WebIdlNapi::InstanceData* idata;`,
     ...((opCount > 0) ? [
       `  napi_property_descriptor props[] =`,
-      generateInitializerList(Object
-        .keys(ops)
-        .map((opname) => ([
-          `"${opname}"`,
+      generateInitializerList([
+        ...Object
+          .keys(ops)
+          .map((opname) => ([
+            `"${opname}"`,
+            `nullptr`,
+            `webidl_napi_interface_${ifname}_${opname}`,
+            `nullptr`,
+            `nullptr`,
+            `nullptr`,
+            `static_cast<napi_property_attributes>(` + [
+              'napi_enumerable',
+              // Or in `napi_static` for static methods.
+              ...(ops[opname][0].special === 'static' ? [ 'napi_static' ] : [])
+            ].join(' | ') + ')',
+            `nullptr`
+          ])),
+        ...attributes.map((attribute) => ([
+          `"${attribute.name}"`,
           `nullptr`,
-          `webidl_napi_interface_${ifname}_${opname}`,
           `nullptr`,
+          `webidl_napi_interface_${ifname}_get_${attribute.name}`,
+          (attribute.readonly
+            ? `nullptr`
+            : `webidl_napi_interface_${ifname}_set_${attribute.name}`),
           `nullptr`,
-          `nullptr`,
-          `static_cast<napi_property_attributes>(` + [
-            'napi_enumerable',
-            // Or in `napi_static` for static methods.
-            ...(ops[opname][0].special === 'static' ? [ 'napi_static' ] : [])
-          ].join(' | ') + ')',
+          `static_cast<napi_property_attributes>(napi_enumerable)`,
           `nullptr`
-        ])), '    ') + ';',
+        ]))
+      ], '    ') + ';',
       ] : []),
     ``,
     `  status = WebIdlNapi::InstanceData::GetCurrent(env, &idata);`,
@@ -659,6 +736,9 @@ function generateIface(iface) {
   const collapsedCtors =
     iface.members.filter((item) => (item.type === 'constructor'))
 
+  const attributes = iface.members
+    .filter((item) => (item.type === 'attribute'));
+
   return [
     [
       `//////////////////////////////////////////////////////////////////////` +
@@ -675,7 +755,8 @@ function generateIface(iface) {
     generateIfaceOperation(iface.name, 'constructor', collapsedCtors),
     ...Object.entries(collapsedOps).map(([opname, sigs]) =>
       generateIfaceOperation(iface.name, opname, sigs)),
-    generateIfaceInit(iface.name, collapsedOps)
+    ...attributes.map((item) => generateIfaceAttribute(iface.name, item)),
+    generateIfaceInit(iface.name, collapsedOps, attributes)
   ].join('\n\n');
 }
 
@@ -729,11 +810,7 @@ function generateInit(tree, moduleName) {
     ]), '  ') + ';',
     `  napi_value exports;`,
     ``,
-    `  NAPI_CALL(`,
-    `      env,`,
-    `      napi_create_object(`,
-    `          env,`,
-    `          &exports));`,
+    `  NAPI_CALL(env, napi_create_object(env, &exports));`,
     ``,
     `  NAPI_CALL(`,
     `      env,`,

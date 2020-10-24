@@ -101,18 +101,38 @@ class Promise {
   static napi_status ToJS(napi_env env,
                           const Promise<T>& promise,
                           napi_value* val);
-  static napi_status ToNative(napi_env env,
-                              napi_value value,
-                              Promise<T>* promise);
+  void Resolve(const T& resolution);
+  void Reject();
+  void Conclude();
+  napi_status Conclude(napi_env env);
+ private:
+  enum State {
+    kPending, kResolved, kRejected
+  };
+  State state = kPending;
+  T resolution;
+  napi_env env = nullptr;
+  napi_value promise = nullptr;
+  napi_deferred deferred = nullptr;
 };
 
 template <typename T>
-class sequence {
+class sequence : public std::vector<T> {
  public:
   static napi_status
   ToJS(napi_env env, const sequence<T>& seq, napi_value* val);
   static napi_status
   ToNative(napi_env env, napi_value val, sequence<T>* result);
+};
+
+template <typename T>
+class FrozenArray : public std::vector<T> {
+ public:
+  FrozenArray(std::initializer_list<T> lst);
+  static napi_status
+  ToJS(napi_env env, const FrozenArray<T>& seq, napi_value* result);
+  static napi_status
+  ToNative(napi_env env, napi_value val, FrozenArray<T>* result);
 };
 
 class InstanceData {

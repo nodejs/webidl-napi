@@ -1,19 +1,32 @@
 #include <stdio.h>
 #include "webgpu-impl.h"
+
+GPUAdapter::GPUAdapter():
+    name("dummy adapter"),
+    extensions({
+      GPUExtensionName::Depth_clamping,
+      GPUExtensionName::Timestamp_query
+    }) {}
+
 WebIdlNapi::Promise<GPUAdapter> GPU::requestAdapter(
                                       const GPURequestAdapterOptions& options) {
   fprintf(stderr,
-      "GPU::RequestAdapter with options { powerPreference: %d(%s) }\n",
+      "GPU::requestAdapter with options { powerPreference: %d(%s) }\n",
       static_cast<int>(options.powerPreference),
       options.powerPreference == GPUPowerPreference::Low_power
         ? "Low_power"
         : options.powerPreference == GPUPowerPreference::High_performance
           ? "High_performance"
           : "unknown");
-  return WebIdlNapi::Promise<GPUAdapter>();
+
+  WebIdlNapi::Promise<GPUAdapter> result;
+  result.Resolve({});
+  return result;
 }
 
 WebIdlNapi::Promise<GPUDevice> GPUAdapter::requestDevice(
                                         const GPUDeviceDescriptor& descriptor) {
-  return WebIdlNapi::Promise<GPUDevice>();
+  WebIdlNapi::Promise<GPUDevice> result;
+  result.Resolve({});
+  return result;
 }
