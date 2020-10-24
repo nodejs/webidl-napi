@@ -2,11 +2,21 @@
 const assert = require('assert');
 test(require('bindings')({ bindings: 'webgpu', module_root: __dirname }));
 
-function test(binding) {
+async function test(binding) {
   const gpu = new binding.GPU();
-  assert.strictEqual(gpu.requestAdapter({powerPreference: 'high-performance'}),
-                     undefined);
+  async function testAdapter(options) {
+    const adapter =
+      await gpu.requestAdapter(options);
+    assert(adapter instanceof binding.GPUAdapter);
+    assert.strictEqual(adapter.name, 'dummy adapter');
+    assert.deepStrictEqual(adapter.extensions, [
+      'depth-clamping', 'timestamp-query'
+    ]);
+  }
+
   // TODO (gabrielschulhof): Expect a more specific error.
   assert.throws(() => gpu.requestAdapter({powerPreference: 'low-powder'}));
-  assert.strictEqual(gpu.requestAdapter(), undefined);
+
+  await testAdapter({ powerPreference: 'high-performance' });
+  await testAdapter();
 }

@@ -49,6 +49,9 @@ struct GPUDeviceDescriptor {
 };
 
 struct GPUAdapter {
+  GPUAdapter();
+  DOMString name;
+  WebIdlNapi::FrozenArray<GPUExtensionName> extensions;
   static WebIdlNapi::Promise<GPUDevice> requestDevice(const GPUDeviceDescriptor& descriptor);
 };
 
