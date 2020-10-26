@@ -113,6 +113,56 @@ Converter<object>::ToJS(napi_env env, const object& val, napi_value* result) {
   return napi_ok;
 }
 
+template <>
+inline napi_status
+Converter<unsigned long>::ToNative(napi_env env,
+                                   napi_value val,
+                                   unsigned long* result) {
+  int64_t from_js;
+  napi_status status = Converter<int64_t>::ToNative(env, val, &from_js);
+  if (status == napi_ok) *result = static_cast<unsigned long>(from_js);
+  return status;
+}
+
+template <>
+inline napi_status
+Converter<unsigned long>::ToJS(napi_env env,
+                               const unsigned long& val,
+                                   napi_value* result) {
+  int64_t to_js = static_cast<int64_t>(val);
+  return Converter<int64_t>::ToJS(env, to_js, result);
+}
+
+inline napi_status IsConstructCall(napi_env env,
+                                   napi_callback_info info,
+                                   const char* ifname,
+                                   bool* result) {
+  napi_value new_target;
+  bool res = true;
+  napi_status status = napi_get_new_target(env, info, &new_target);
+  if (status != napi_ok) return status;
+
+  if (new_target == nullptr) {
+    status = napi_throw_error(env,
+                              nullptr,
+                              (std::string("Non-construct calls to the `") +
+                                  ifname + "` constructor are not supported.")
+                                  .c_str());
+    if (status != napi_ok) return status;
+    res = false;
+  }
+
+  *result = res;
+  return status;
+}
+
+template <typename T>
+static void ObjectWrapDestructor(napi_env env, void* data, void* hint) {
+  (void) env;
+  (void) hint;
+  delete reinterpret_cast<T*>(data);
+}
+
 inline napi_status PickSignature(napi_env env,
                                  size_t argc,
                                  napi_value* argv,

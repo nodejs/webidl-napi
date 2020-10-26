@@ -67,6 +67,21 @@ using bool_t = bool;
 
 namespace WebIdlNapi {
 
+static napi_status
+PickSignature(napi_env env,
+              size_t argc,
+              napi_value* argv,
+              std::vector<webidl_sig> sigs,
+              int* sig_idx);
+
+static napi_status IsConstructCall(napi_env env,
+                                   napi_callback_info info,
+                                   const char* ifname,
+                                   bool* result);
+
+template <typename T>
+static void ObjectWrapDestructor(napi_env env, void* data, void* hint);
+
 template <typename T>
 class Converter {
  public:
@@ -77,14 +92,6 @@ class Converter {
                           const T& value,
                           napi_value* result);
 };
-
-
-static napi_status
-PickSignature(napi_env env,
-              size_t argc,
-              napi_value* argv,
-              std::vector<webidl_sig> sigs,
-              int* sig_idx);
 
 template <typename T>
 class Promise {
