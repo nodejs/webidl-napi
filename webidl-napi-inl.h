@@ -223,5 +223,67 @@ inline napi_status sequence<T>::ToNative(napi_env env,
   return napi_ok;
 }
 
+// We assume that we are in control of the instance data for this add-on. Even
+// so, we also assume that there may be multiple generated files bundled into
+// this add-on, each of which uses `InstanceData` to manage its state. Thus,
+// if no data is set, we set a new instance, and if one is already set, we
+// assume it's an instance of `InstanceData` and use that.
+// static
+inline napi_status
+InstanceData::GetCurrent(napi_env env, InstanceData** result) {
+  void* data = nullptr;
+
+  napi_status status = napi_get_instance_data(env, &data);
+  if (status != napi_ok) return status;
+
+  if (data == nullptr) {
+    InstanceData* new_data = new InstanceData;
+
+    data = static_cast<void*>(new_data);
+    status = napi_set_instance_data(env, data, DestroyInstanceData, nullptr);
+    if (status != napi_ok) {
+      delete new_data;
+      return status;
+    }
+  }
+
+  *result = static_cast<InstanceData*>(data);
+  return napi_ok;
+}
+
+inline void InstanceData::AddConstructor(const char* name, napi_ref ctor) {
+  ctors[name] = ctor;
+}
+
+inline void
+InstanceData::SetData(void* new_data, napi_finalize fin_cb, void* new_hint) {
+  data = new_data;
+  cb = fin_cb;
+  hint = new_hint;
+}
+
+inline void* InstanceData::GetData() {
+  return data;
+}
+
+// static
+inline void
+InstanceData::DestroyInstanceData(napi_env env, void* data, void* hint) {
+  (void) hint;
+  static_cast<InstanceData*>(data)->Destroy(env);
+}
+
+inline void InstanceData::Destroy(napi_env env) {
+  for (std::pair<const char*, napi_ref> ctor: ctors) {
+    NAPI_CALL_RETURN_VOID(env, napi_delete_reference(env, ctor.second));
+  }
+
+  if (data != nullptr && cb != nullptr) cb(env, data, hint);
+}
+
+inline napi_ref InstanceData::GetConstructor(const char* name) {
+  return ctors[name];
+}
+
 }  // end of namespace WebIdlNapi
 #endif  // WEBIDL_NAPI_INL_H

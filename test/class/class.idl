@@ -1,6 +1,12 @@
-interface JSClassExample {
+interface Decrementor {
+  constructor(Incrementor incrementor);
+  unsigned long decrement();
+};
+
+interface Incrementor {
   constructor();
   constructor(unsigned long initial);
   constructor(DOMString initial);
   unsigned long increment();
+  Decrementor getDecrementor();
 };

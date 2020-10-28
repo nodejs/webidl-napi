@@ -2,7 +2,7 @@
 #define WEBIDL_NAPI_TEST_WEBIDL2_EXAMPLE_EXAMPLE_IMPL_H
 
 #include <string>
-#include "webidl-napi-inl.h"
+#include "webidl-napi.h"
 
 class WebIDLCompiler {
  public:

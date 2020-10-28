@@ -9,8 +9,6 @@ const argv = yargs
   .describe('I', 'print include directory and exit')
   .describe('i', 'add #include after js_native_api.h')
   .nargs('i', 1)
-  .describe('n', 'N-API include file')
-  .default('n', 'js_native_api.h')
   .nargs('o', 1)
   .describe('o', 'output file')
   .argv;
@@ -303,10 +301,13 @@ function generateSigCandidates(sigs) {
       true,
       sig.arguments.map((arg) =>
         typemapWebIDLBasicTypesToNAPI[generateNativeType(arg.idlType)].type)
-    ]), '          ');
+    ]), '            ');
 }
 
-function generateParamRetrieval(sigs, maxArgs) {
+function generateParamRetrieval(sigs, maxArgs, isForConstructor) {
+  if (isForConstructor && maxArgs === 0) {
+    maxArgs = 1;
+  }
   return [
     // We declare variable `sig_idx` only if there are multiple signatures.
     ...(sigs.length > 1 ? [ `  int sig_idx = -1;` ] : []),
@@ -314,6 +315,11 @@ function generateParamRetrieval(sigs, maxArgs) {
     ...(maxArgs > 0 ? [
       `  size_t argc = ${maxArgs};`,
       `  napi_value argv[${maxArgs}];`,
+    ] : []),
+    // This constructor may be called from native with a single `napi_external`.
+    ...(isForConstructor ? [
+      `  napi_value external = nullptr;`,
+      `  napi_valuetype external_type;`
     ] : []),
     `  napi_value js_rcv;`,
     `  NAPI_CALL(`,
@@ -331,18 +337,38 @@ function generateParamRetrieval(sigs, maxArgs) {
     ]),
     `          &js_rcv,`,
     `          nullptr));`,
+    // If this is a constructor, see if the first retrieved argument is of type
+    // `napi_external`. If so, set `external` to it, because a non-`nullptr`
+    // value for `external` will trigger the straight-to-`napi_wrap` special
+    // case.
+    ...(isForConstructor ? [
+      `  NAPI_CALL(env, napi_typeof(env, argv[0], &external_type));`,
+      `  if (external_type == napi_external) external = argv[0];`,
+    ] : []),
     // If we have multiple signatures, let's generate the code to figure out
     // which one the JS is trying to call, and then generate the code that
-    // assigns the result to `sig_idx`.
+    // assigns the result to `sig_idx`. However, we need not pick a signature if
+    // `external` is non-null, because then we're down the special code path for
+    // constructing a new object via a `napi_new_instance` call that happened in
+    // another method.
     ...(sigs.length > 1 ? [
-      `  NAPI_CALL(`,
-      `      env,`,
-      `      WebIdlNapi::PickSignature(`,
-      `          env,`,
-      `          argc,`,
-      `          argv,`,
-      `${generateSigCandidates(sigs)},`,
-      `          &sig_idx));`,
+      // Wrap the `PickSignature` call in an if-statement, but only if this is a
+      // constructor.
+      ...(isForConstructor ? [ `  if (external == nullptr) {` ] : []) ,
+      ...([
+        `    NAPI_CALL(`,
+        `        env,`,
+        `        WebIdlNapi::PickSignature(`,
+        `            env,`,
+        `            argc,`,
+        `            argv,`,
+        `${generateSigCandidates(sigs)},`,
+        `            &sig_idx));`,
+      ]
+      // If we wrap the `PickSignature` call in an if-statement, we must also
+      // indent it by two more spaces.
+      .map((item) => (isForConstructor ? ('  ' + item) : item))),
+      ...(isForConstructor ? [ `  }` ] : []) ,
     ] : []),
     // TODO(gabrielschulhof): What if, upon return, argc is greater than maxArgs?
   ].join('\n');
@@ -360,63 +386,71 @@ function generateCall(ifname, sig, indent) {
     ].map((item) => (indent + item));
   }
   return [
-    // Convert arguments to native data types. This assumes that the DOM type
-    // is a real C++ type and that a function named
-    // `WebIdl::Converter<DOM type>::ToNative` exists.
-    ...sig.arguments.reduce((soFar, arg, index) => soFar.concat([
-      `${generateNativeType(arg.idlType)} native_arg_${index};`,
-      // If the argument is optional, we check that we have it first.
-      ...(arg.optional ? [
-        `bool have_arg_${index} = false;`,
-        `{`,
-        `  napi_valuetype val_type;`,
-        `  NAPI_CALL(`,
-        `      env,`,
-        `      napi_typeof(`,
-        `          env,`,
-        `          argv[${index}],`,
-        `          &val_type));`,
-        `  have_arg_${index} = (val_type != napi_undefined);`,
-        `}`,
-        `if (have_arg_${index}) {`,
-        ...argToNativeCall(arg.idlType, index, '  '),
-        `}`,
-      ] : argToNativeCall(arg.idlType, index, '')),
-    ]), []),
-    ``,
-    // If this is not a static method or a constructor, declare and retrieve the
-    // native instance `cc_rcv` corresponding to the JS instance in `js_rcv`.
-    ...((sig.special !== 'static' && sig.type != 'constructor') ? [
-      `void* cc_rcv_raw;`,
-      `${ifname}* cc_rcv;`,
-      `NAPI_CALL(`,
-      `    env,`,
-      `    napi_unwrap(`,
-      `        env,`,
-      `        js_rcv,`,
-      `        &cc_rcv_raw));`,
-      `cc_rcv = static_cast<${ifname}*>(cc_rcv_raw);`,
-      ``
+    ...(sig.external != true ? [
+      // Convert arguments to native data types. This assumes that the DOM type
+      // is a real C++ type and that a function named
+      // `WebIdl::Converter<DOM type>::ToNative` exists.
+      ...sig.arguments.reduce((soFar, arg, index) => soFar.concat([
+        `${generateNativeType(arg.idlType)} native_arg_${index};`,
+        // If the argument is optional, we check that we have it first.
+        ...(arg.optional ? [
+          `bool have_arg_${index} = false;`,
+          `{`,
+          `  napi_valuetype val_type;`,
+          `  NAPI_CALL(`,
+          `      env,`,
+          `      napi_typeof(`,
+          `          env,`,
+          `          argv[${index}],`,
+          `          &val_type));`,
+          `  have_arg_${index} = (val_type != napi_undefined);`,
+          `}`,
+          `if (have_arg_${index}) {`,
+          ...argToNativeCall(arg.idlType, index, '  '),
+          `}`,
+        ] : argToNativeCall(arg.idlType, index, '')),
+      ]), []),
+      ``,
+      // If this is not a static method or a constructor, declare and retrieve the
+      // native instance `cc_rcv` corresponding to the JS instance in `js_rcv`.
+      ...((sig.special !== 'static' && sig.type != 'constructor') ? [
+        `void* cc_rcv_raw;`,
+        `${ifname}* cc_rcv;`,
+        `NAPI_CALL(`,
+        `    env,`,
+        `    napi_unwrap(`,
+        `        env,`,
+        `        js_rcv,`,
+        `        &cc_rcv_raw));`,
+        `cc_rcv = static_cast<${ifname}*>(cc_rcv_raw);`,
+        ``
+      ] : [])
     ] : []),
     // A constructor has no return value, but we can hold the new instance in
     // such a variable if this is a constructor.
     ...(sig.type === 'constructor' ? [ `${ifname}* ret;` ] : []),
-    // If there's a return value or this is a constructor, assign it to a
-    // variable.
-    (((sig.idlType && sig.idlType.type === 'return-type') ||
-        sig.type === 'constructor') ? 'ret = ' : '') +
-      // If it's a static method, call via `ifname::methodname(...)`. Otherwise,
-      // if it's a constructor, call via `new ifname(...)`. Finally, if it's an
-      // instance method, call via `cc_rcv->methodname(...)`.
-      (sig.special === 'static'
-        ? `${ifname}::`
-        : (sig.type === 'constructor'
-          ? `new ${ifname}`
-          : 'cc_rcv->')) + (sig.type === 'constructor' ? '' : sig.name) + `(` +
-        // Generate the arguments: native_arg_0, native_arg_1, ...
-        Array.apply(0, Array(sig.arguments.length))
-          .map((item, idx) => `native_arg_${idx}`).join(', ') +
-      ');',
+    ...(sig.external != true ? [
+      // If there's a return value or this is a constructor, assign it to a
+      // variable.
+      (((sig.idlType && sig.idlType.type === 'return-type') ||
+          sig.type === 'constructor') ? 'ret = ' : '') +
+        // If it's a static method, call via `ifname::methodname(...)`. Otherwise,
+        // if it's a constructor, call via `new ifname(...)`. Finally, if it's an
+        // instance method, call via `cc_rcv->methodname(...)`.
+        (sig.special === 'static'
+          ? `${ifname}::`
+          : (sig.type === 'constructor'
+            ? `new ${ifname}`
+            : 'cc_rcv->')) + (sig.type === 'constructor' ? '' : sig.name) + `(` +
+          // Generate the arguments: native_arg_0, native_arg_1, ...
+          Array.apply(0, Array(sig.arguments.length))
+            .map((item, idx) => `native_arg_${idx}`).join(', ') +
+        ');',
+      ] : [
+        `void* external_data;`,
+        `NAPI_CALL(env, napi_get_value_external(env, external, &external_data));`,
+        `ret = static_cast<${ifname}*>(external_data);`,
+      ]),
       // If this is a constructor, we created the new instance above. Let's wrap
       // it into the JS object we're constructing.
       ...(sig.type === 'constructor' ? [
@@ -470,7 +504,14 @@ function generateIfaceOperation(ifname, opname, sigs) {
     // If we have args or the method is not static then generate the arg
     // retrieval code and decide which signature to call.
     ...((maxArgs > 0 || sigs[0].special === '') ? [
-      generateParamRetrieval(sigs, maxArgs)
+      generateParamRetrieval(sigs, maxArgs, opname === 'constructor')
+    ] : []),
+    // Handle the case in a constructor where the `argv[0]` was an external.
+    ...(opname === 'constructor' ? [
+      `  if (external != nullptr) {`,
+      generateCall(ifname, { type: 'constructor', external: true }, '    '),
+      `    return nullptr;`,
+      `  }`,
     ] : []),
     // If we have a return value, declare the variable that stores the return
     // value from the call to the native function.
@@ -507,6 +548,10 @@ function generateIfaceInit(ifname, ops) {
     `webidl_napi_create_interface_${ifname}(`,
     `    napi_env env,`,
     `    napi_value* result) {`,
+    `  napi_status status;`,
+    `  napi_value ctor;`,
+    `  napi_ref ctor_ref;`,
+    `  WebIdlNapi::InstanceData* idata;`,
     ...((opCount > 0) ? [
       `  napi_property_descriptor props[] =`,
       generateInitializerList(Object
@@ -526,8 +571,11 @@ function generateIfaceInit(ifname, ops) {
           `nullptr`
         ])), '    ') + ';',
       ] : []),
-    '',
-    `  return napi_define_class(`,
+    ``,
+    `  status = WebIdlNapi::InstanceData::GetCurrent(env, &idata);`,
+    `  if (status != napi_ok) return status;`,
+    ``,
+    `  status = napi_define_class(`,
     `      env,`,
     `      "${ifname}",`,
     `      NAPI_AUTO_LENGTH,`,
@@ -540,8 +588,61 @@ function generateIfaceInit(ifname, ops) {
       `      0,`,
       `      nullptr,`,
     ]),
-    `      result);`,
+    `      &ctor);`,
+    `  if (status != napi_ok) return status;`,
+    ``,
+    `  status = napi_create_reference(env, ctor, 1, &ctor_ref);`,
+    `  if (status != napi_ok) return status;`,
+    ``,
+    `  idata->AddConstructor("${ifname}", ctor_ref);`,
+    `  *result = ctor;`,
+    `  return napi_ok;`,
     `}`
+  ].join('\n');
+}
+
+function generateIfaceConverters(ifaceName) {
+  return [
+  `template<>`,
+  `napi_status WebIdlNapi::Converter<${ifaceName}>::ToJS(`,
+  `    napi_env env,`,
+  `    const ${ifaceName}& val,`,
+  `    napi_value* result) {`,
+  `  napi_status status;`,
+  `  napi_value external, ctor;`,
+  `  InstanceData* idata;`,
+  ``,
+  `  status = InstanceData::GetCurrent(env, &idata);`,
+  `  if (status != napi_ok) return status;`,
+  ``,
+  `  ${ifaceName}* local = new ${ifaceName};`,
+  `  *local = val;`,
+  `  status = napi_create_external(env, local, nullptr, nullptr, &external);`,
+  `  if (status != napi_ok) return status;`,
+  ``,
+  `  status = napi_get_reference_value(`,
+  `      env,`,
+  `      idata->GetConstructor("${ifaceName}"),`,
+  `      &ctor);`,
+  `  if (status != napi_ok) return status;`,
+  ``,
+  `  status = napi_new_instance(env, ctor, 1, &external, result);`,
+  `  if (status != napi_ok) return status;`,
+  `  return status;`,
+  `}`,
+  ``,
+  `template<>`,
+  `napi_status WebIdlNapi::Converter<${ifaceName}>::ToNative(`,
+  `    napi_env env,`,
+  `    napi_value val,`,
+  `    ${ifaceName}* result) {`,
+  `  void* data;`,
+  `  napi_status status = napi_unwrap(env, val, &data);`,
+  `  if (status != napi_ok) return status;`,
+  ``,
+  `  *result = *static_cast<${ifaceName}*>(data);`,
+  `  return napi_ok;`,
+  `}`
   ].join('\n');
 }
 
@@ -570,6 +671,7 @@ function generateIface(iface) {
     // array of [opname, sigs] tuples, each of which we pass to
     // `generateIfaceOperation`. That way, only one binding is generated for all
     // signatures of an operation.
+    generateIfaceConverters(iface.name),
     generateIfaceOperation(iface.name, 'constructor', collapsedCtors),
     ...Object.entries(collapsedOps).map(([opname, sigs]) =>
       generateIfaceOperation(iface.name, opname, sigs)),
@@ -710,7 +812,6 @@ const interfaces = Object.values(ifaces);
 
 fs.writeFileSync(outputFile, [
   [
-    argv.n,
     'webidl-napi.h',
     // If the user requested extra includes, add them as `#include "extra-include.h"`.
     // argv.i may be absent, may be a string, or it may be an array.

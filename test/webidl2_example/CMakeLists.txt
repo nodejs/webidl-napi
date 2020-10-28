@@ -14,7 +14,7 @@ execute_process(
 )
 string(REPLACE "\n" "" REPO_ROOT ${REPO_ROOT})
 add_custom_command(
-    COMMAND node ${REPO_ROOT}/index.js -i example-impl.h -n node_api.h -o ${CMAKE_CURRENT_BINARY_DIR}/example.cc ${CMAKE_CURRENT_SOURCE_DIR}/example.idl
+    COMMAND node ${REPO_ROOT}/index.js -i example-impl.h -o ${CMAKE_CURRENT_BINARY_DIR}/example.cc ${CMAKE_CURRENT_SOURCE_DIR}/example.idl
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/example.idl ${REPO_ROOT}/index.js
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/example.cc
     COMMENT "Generating code for example.idl."

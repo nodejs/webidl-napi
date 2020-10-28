@@ -1,13 +1,15 @@
-#ifndef WEBIDL_NAPI
-#define WEBIDL_NAPI
+#ifndef WEBIDL_NAPI_H
+#define WEBIDL_NAPI_H
 
 #include <string.h>
 #include <string>
+#include <map>
 #include <memory>
 #include <vector>
 
 // TODO(gabrielschulhof): Once we no longer support Node.js 10, we can
 // unconditionally switch to the js_native_api.h header.
+#define NAPI_EXPERIMENTAL
 #if defined(BUILDING_NODE_EXTENSION)
 #include "node_api.h"
 #else
@@ -113,8 +115,24 @@ class sequence {
   ToNative(napi_env env, napi_value val, sequence<T>* result);
 };
 
+class InstanceData {
+ public:
+  static napi_status GetCurrent(napi_env env, InstanceData** result);
+  void AddConstructor(const char* name, napi_ref ctor);
+  napi_ref GetConstructor(const char* name);
+  void SetData(void* data, napi_finalize fin_cb, void* hint);
+  void* GetData();
+ private:
+  static void DestroyInstanceData(napi_env env, void* raw, void* hint);
+  void Destroy(napi_env env);
+  std::map<const char*, napi_ref> ctors;
+  void* data = nullptr;
+  void* hint = nullptr;
+  napi_finalize cb = nullptr;
+};
+
 }  // end of namespace WebIdlNapi
 
 #include "webidl-napi-inl.h"
 
-#endif  // WEBIDL_NAPI
+#endif  // WEBIDL_NAPI_H

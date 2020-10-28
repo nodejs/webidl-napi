@@ -3,14 +3,31 @@
 
 #include "webidl-napi.h"
 
-class JSClassExample {
+typedef struct value__* Value;
+class Incrementor;
+
+class Decrementor {
  public:
-  explicit JSClassExample();
-  JSClassExample(unsigned long initial);
-  JSClassExample(DOMString initial);
-  unsigned long increment();
+  void operator=(const Decrementor& other);
+  Decrementor();
+  Decrementor(const Incrementor& inc);
+  ~Decrementor();
+  unsigned long decrement();
  private:
-  unsigned long value = 0;
+  Value val = nullptr;
+};
+
+class Incrementor {
+ public:
+  explicit Incrementor();
+  Incrementor(unsigned long initial);
+  Incrementor(DOMString initial);
+  unsigned long increment();
+  Decrementor getDecrementor();
+  friend class Decrementor;
+  ~Incrementor();
+ private:
+  Value val;
 };
 
 #endif  // WEBIDL_NAPI_TEST_WEBIDL2_EXAMPLE_EXAMPLE_IMPL_H
