@@ -14,7 +14,7 @@ execute_process(
 )
 string(REPLACE "\n" "" REPO_ROOT ${REPO_ROOT})
 add_custom_command(
-    COMMAND node ${REPO_ROOT}/index.js -i webgpu-impl.h -n node_api.h -o ${CMAKE_CURRENT_BINARY_DIR}/webgpu.cc ${CMAKE_CURRENT_SOURCE_DIR}/webgpu.idl
+    COMMAND node ${REPO_ROOT}/index.js -i webgpu-impl.h -o ${CMAKE_CURRENT_BINARY_DIR}/webgpu.cc ${CMAKE_CURRENT_SOURCE_DIR}/webgpu.idl
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/webgpu.idl ${REPO_ROOT}/index.js
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/webgpu.cc
     COMMENT "Generating code for webgpu.idl."

@@ -1,7 +1,7 @@
 #ifndef WEBIDL_NAPI_TEST_WEBGPU_WEBGPU_IMPL_H
 #define WEBIDL_NAPI_TEST_WEBGPU_WEBGPU_IMPL_H
 
-#include "webidl-napi-inl.h"
+#include "webidl-napi.h"
 
 enum GPUPowerPreference {
   Low_power,
