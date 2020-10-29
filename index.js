@@ -414,12 +414,7 @@ function generateCall(ifname, sig, indent) {
       ...((sig.special !== 'static' && sig.type != 'constructor') ? [
         `void* cc_rcv_raw;`,
         `${ifname}* cc_rcv;`,
-        `NAPI_CALL(`,
-        `    env,`,
-        `    napi_unwrap(`,
-        `        env,`,
-        `        js_rcv,`,
-        `        &cc_rcv_raw));`,
+        `NAPI_CALL(env, napi_unwrap(env, js_rcv, &cc_rcv_raw));`,
         `cc_rcv = static_cast<${ifname}*>(cc_rcv_raw);`,
         ``
       ] : [])
@@ -604,7 +599,7 @@ function generateIfaceAttribute(ifname, attribute) {
 }
 
 function generateIfaceInit(ifname, ops, attributes) {
-  const opCount = Object.keys(ops).length;
+  const propCount = Object.keys(ops).length + attributes.length;
   return [
     // Generate the init method that defines the JS class.
     `static napi_status`,
@@ -615,7 +610,7 @@ function generateIfaceInit(ifname, ops, attributes) {
     `  napi_value ctor;`,
     `  napi_ref ctor_ref;`,
     `  WebIdlNapi::InstanceData* idata;`,
-    ...((opCount > 0) ? [
+    ...((propCount > 0) ? [
       `  napi_property_descriptor props[] =`,
       generateInitializerList([
         ...Object
@@ -658,7 +653,7 @@ function generateIfaceInit(ifname, ops, attributes) {
     `      NAPI_AUTO_LENGTH,`,
     `      webidl_napi_interface_${ifname}_constructor,`,
     `      nullptr,`,
-    ...((opCount > 0) ? [
+    ...((propCount > 0) ? [
       `      sizeof(props) / sizeof(*props),`,
       `      props,`,
     ] : [
@@ -760,17 +755,7 @@ function generateIface(iface) {
   ].join('\n\n');
 }
 
-function generateInit(tree, moduleName) {
-  // Array of {
-  //   valueName: string (name of variable used in propDesc)
-  //   initializer: string (call to webidl_napi_create_interface)
-  //   propDesc: string (C initializer: {
-  //     "interfaceName", nullptr, nullptr, nullptr, nullptr, valueName,
-  //     napi_enumerable, nullptr
-  //   })
-  // }
-  const interfaces = tree.filter((item) => (item.type === 'interface'));
-
+function generateInit(interfaces, moduleName) {
   return [
     `/////////////////////////////////////////////////////////////////////////` +
       `///////`,
@@ -781,37 +766,30 @@ function generateInit(tree, moduleName) {
     `napi_value`,
     `${moduleName}_init(`,
     `    napi_env env) {`,
-    // Declare a `napi_value` `interface_0`, `interface_1`, ... for each
-    // interface found.
-    `  napi_value`,
-    `    ${interfaces.map((item, idx) => (`interface_${idx}`)).join(',\n    ')};`,
-    ``,
-    // Initialize each `interface_0`, ... value.
-    ...interfaces.reduce((soFar, item, idx) => soFar.concat([
-      `  NAPI_CALL(`,
-      `      env,`,
-      `      webidl_napi_create_interface_${item.name}(`,
-      `          env,`,
-      `          &interface_${idx}));`
-    ]), []),
-    ``,
-    // Place all `interface_0`, ... values into an array of property
-    // descriptors.
+    // Create an array of property descriptors for each interface.
     `  napi_property_descriptor props[] =`,
-    generateInitializerList(interfaces.map((item, idx) => [
+    generateInitializerList(interfaces.map((item) => [
       `"${item.name}"`,
       `nullptr`,
       `nullptr`,
       `nullptr`,
       `nullptr`,
-      `interface_${idx}`,
+      `nullptr`,
       `napi_enumerable`,
       `nullptr`
     ]), '  ') + ';',
+    ``,
+    // Initialize the `value` field of each property descriptor.
+    ...interfaces.reduce((soFar, item, idx) => soFar.concat([
+      `  NAPI_CALL(`,
+      `      env,`,
+      `      webidl_napi_create_interface_${item.name}(`,
+      `          env,`,
+      `          &(props[${idx}].value)));`
+    ]), []),
+    ``,
     `  napi_value exports;`,
-    ``,
     `  NAPI_CALL(env, napi_create_object(env, &exports));`,
-    ``,
     `  NAPI_CALL(`,
     `      env,`,
     `      napi_define_properties(`,
@@ -899,5 +877,5 @@ fs.writeFileSync(outputFile, [
   ...enums.map(generateEnumMaps),
   ...dictionaries.map(generateDictionaryMaps),
   ...interfaces.map(generateIface),
-  generateInit(tree, parsedPath.name)
+  generateInit(interfaces, parsedPath.name)
 ].join('\n\n') + '\n');
