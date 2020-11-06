@@ -19,4 +19,10 @@ async function test(binding) {
 
   await testAdapter({ powerPreference: 'high-performance' });
   await testAdapter();
+
+  // Make sure the `gpu` property is `SameObject`.
+  const nav = new binding.Navigator();
+  const gpu1 = nav.gpu;
+  const gpu2 = nav.gpu;
+  assert.strictEqual(gpu1, gpu2);
 }

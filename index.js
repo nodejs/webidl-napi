@@ -372,7 +372,7 @@ function generateParamRetrieval(sigs, maxArgs, isForConstructor) {
   ].join('\n');
 }
 
-function generateCall(ifname, sig, indent) {
+function generateCall(ifname, sig, indent, sameObjAttrCount) {
   function argToNativeCall(idlType, index, indent) {
     return [
       `NAPI_CALL(`,
@@ -412,10 +412,9 @@ function generateCall(ifname, sig, indent) {
       // If this is not a static method or a constructor, declare and retrieve the
       // native instance `cc_rcv` corresponding to the JS instance in `js_rcv`.
       ...((sig.special !== 'static' && sig.type != 'constructor') ? [
-        `void* cc_rcv_raw;`,
         `${ifname}* cc_rcv;`,
-        `NAPI_CALL(env, napi_unwrap(env, js_rcv, &cc_rcv_raw));`,
-        `cc_rcv = static_cast<${ifname}*>(cc_rcv_raw);`,
+        `NAPI_CALL(env,`,
+        `    WebIdlNapi::Wrapping<${ifname}>::Retrieve(env, js_rcv, &cc_rcv));`,
         ``
       ] : [])
     ] : []),
@@ -448,13 +447,11 @@ function generateCall(ifname, sig, indent) {
       // it into the JS object we're constructing.
       ...(sig.type === 'constructor' ? [
         `NAPI_CALL(env,`,
-        `    napi_wrap(`,
+        `    WebIdlNapi::Wrapping<${ifname}>::Create(`,
         `        env,`,
         `        js_rcv,`,
-        `        static_cast<void*>(ret),`,
-        `        &WebIdlNapi::ObjectWrapDestructor<${ifname}>,`,
-        `        nullptr,`,
-        `        nullptr));`
+        `        ret,`,
+        `        ${sameObjAttrCount}));`
       ] : []),
       // Special handling for promises. We need to call `Conclude()` before
       // returning to JS to at least create the `napi_deferred` and even resolve
@@ -468,7 +465,7 @@ function generateCall(ifname, sig, indent) {
   .join('\n');
 }
 
-function generateIfaceOperation(ifname, opname, sigs) {
+function generateIfaceOperation(ifname, opname, sigs, sameObjAttrCount) {
   if (sigs.length === 0) {
     // If we have no signatures, generate a trivial one.
     sigs = [ {
@@ -508,7 +505,10 @@ function generateIfaceOperation(ifname, opname, sigs) {
     // Handle the case in a constructor where the `argv[0]` was an external.
     ...(opname === 'constructor' ? [
       `  if (external != nullptr) {`,
-      generateCall(ifname, { type: 'constructor', external: true }, '    '),
+      generateCall(ifname,
+                   { type: 'constructor', external: true },
+                   '    ',
+                   sameObjAttrCount),
       `    return nullptr;`,
       `  }`,
     ] : []),
@@ -520,10 +520,10 @@ function generateIfaceOperation(ifname, opname, sigs) {
     ...(sigs.length > 1
       ? [ sigs.map((sig, index) => [
           `  if (sig_idx == ${index}) {`,
-          generateCall(ifname, sig, '    '),
+          generateCall(ifname, sig, '    ', sameObjAttrCount),
           '  }'
         ].join('\n')).join('\n  else\n') ]
-      : [ generateCall(ifname, sigs[0], '  ') ]),
+      : [ generateCall(ifname, sigs[0], '  ', sameObjAttrCount) ]),
     // If the op has a return type, compute it and store the resulting
     // `napi_value` in `js_ret`.
     ...(hasReturn ? [
@@ -539,7 +539,7 @@ function generateIfaceOperation(ifname, opname, sigs) {
   ].join('\n');
 }
 
-function generateIfaceAttribute(ifname, attribute) {
+function generateIfaceAttribute(ifname, attribute, sameObjIdx) {
   const nativeAttributeType = generateNativeType(attribute.idlType);
   function generateAccessor(slug) {
     return [
@@ -566,9 +566,25 @@ function generateIfaceAttribute(ifname, attribute) {
       `          &js_rcv,`,
       `          nullptr));`,
       ``,
-      `  void* raw_data;`,
-      `  NAPI_CALL(env, napi_unwrap(env, js_rcv, &raw_data));`,
-      `  ${ifname}* cc_rcv = static_cast<${ifname}*>(raw_data);`,
+      `  ${ifname}* cc_rcv;`,
+      ...((sameObjIdx >= 0 && slug === 'get') ? [
+        `  WebIdlNapi::Wrapping<${ifname}>* wrapping;`,
+        `  NAPI_CALL(env,`,
+        `      WebIdlNapi::Wrapping<${ifname}>::Retrieve(`,
+        `        env,`,
+        `        js_rcv,`,
+        `        &cc_rcv,`,
+        `        ${sameObjIdx},`,
+        `        &result,`,
+        `        &wrapping));`,
+        `  if (result != nullptr) return result;`
+      ] : [
+        `  NAPI_CALL(env,`,
+        `      WebIdlNapi::Wrapping<${ifname}>::Retrieve(`,
+        `        env,`,
+        `        js_rcv,`,
+        `        &cc_rcv));`,
+      ]),
       ``,
       ...(slug === 'set' ? [
         `  NAPI_CALL(`,
@@ -584,6 +600,9 @@ function generateIfaceAttribute(ifname, attribute) {
         `          env,`,
         `          cc_rcv->${attribute.name},`,
         `          &result));`,
+        ...((sameObjIdx >= 0 && slug === 'get') ? [
+          `  NAPI_CALL(env, wrapping->SetRef(env, ${sameObjIdx}, result));`,
+        ] : [])
       ]),
       `  return result;`,
       `}`,
@@ -708,11 +727,12 @@ function generateIfaceConverters(ifaceName) {
   `    napi_env env,`,
   `    napi_value val,`,
   `    ${ifaceName}* result) {`,
-  `  void* data;`,
-  `  napi_status status = napi_unwrap(env, val, &data);`,
+  `  ${ifaceName}* data;`,
+  `  napi_status status =`,
+  `      WebIdlNapi::Wrapping<${ifaceName}>::Retrieve(env, val, &data);`,
   `  if (status != napi_ok) return status;`,
   ``,
-  `  *result = *static_cast<${ifaceName}*>(data);`,
+  `  *result = *data;`,
   `  return napi_ok;`,
   `}`
   ].join('\n');
@@ -731,8 +751,17 @@ function generateIface(iface) {
   const collapsedCtors =
     iface.members.filter((item) => (item.type === 'constructor'))
 
-  const attributes = iface.members
-    .filter((item) => (item.type === 'attribute'));
+  const { attrs, sameObjAttrs } =
+    iface.members.reduce((soFar, item) => {
+      if (item.type === 'attribute') {
+        const list = ((item.extAttrs.filter(({ name }) =>
+          (name === 'SameObject'))).length > 0)
+            ? 'sameObjAttrs'
+            : 'attrs';
+        soFar[list].push(item);
+      }
+      return soFar;
+    }, { attrs: [], sameObjAttrs: [] });
 
   return [
     [
@@ -747,11 +776,14 @@ function generateIface(iface) {
     // `generateIfaceOperation`. That way, only one binding is generated for all
     // signatures of an operation.
     generateIfaceConverters(iface.name),
-    generateIfaceOperation(iface.name, 'constructor', collapsedCtors),
+    generateIfaceOperation(iface.name, 'constructor', collapsedCtors,
+      sameObjAttrs.length),
     ...Object.entries(collapsedOps).map(([opname, sigs]) =>
       generateIfaceOperation(iface.name, opname, sigs)),
-    ...attributes.map((item) => generateIfaceAttribute(iface.name, item)),
-    generateIfaceInit(iface.name, collapsedOps, attributes)
+    ...attrs.map((item) => generateIfaceAttribute(iface.name, item)),
+    ...sameObjAttrs.map((item, idx) =>
+      generateIfaceAttribute(iface.name, item, idx)),
+    generateIfaceInit(iface.name, collapsedOps, [...attrs, ...sameObjAttrs])
   ].join('\n\n');
 }
 

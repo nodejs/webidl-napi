@@ -82,9 +82,6 @@ static napi_status IsConstructCall(napi_env env,
                                    bool* result);
 
 template <typename T>
-static void ObjectWrapDestructor(napi_env env, void* data, void* hint);
-
-template <typename T>
 class Converter {
  public:
   static napi_status ToNative(napi_env env,
@@ -149,6 +146,26 @@ class InstanceData {
   void* data = nullptr;
   void* hint = nullptr;
   napi_finalize cb = nullptr;
+};
+
+template <typename T>
+class Wrapping {
+ public:
+  static napi_status Create(napi_env env,
+                            napi_value js_rcv,
+                            T* cc_rcv,
+                            size_t same_obj_count = 0);
+  static napi_status Retrieve(napi_env env,
+                              napi_value js_rcv,
+                              T** cc_rcv,
+                              int ref_idx = -1,
+                              napi_value* ref = nullptr,
+                              Wrapping<T>** wrapping = nullptr);
+  napi_status SetRef(napi_env env, int idx, napi_value same_obj);
+ private:
+  static void Destroy(napi_env env, void* data, void* hint);
+  T* native = nullptr;
+  std::vector<napi_ref> refs;
 };
 
 }  // end of namespace WebIdlNapi

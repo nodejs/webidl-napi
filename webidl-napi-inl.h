@@ -238,13 +238,6 @@ inline napi_status IsConstructCall(napi_env env,
   return status;
 }
 
-template <typename T>
-static void ObjectWrapDestructor(napi_env env, void* data, void* hint) {
-  (void) env;
-  (void) hint;
-  delete reinterpret_cast<T*>(data);
-}
-
 inline napi_status PickSignature(napi_env env,
                                  size_t argc,
                                  napi_value* argv,
@@ -433,6 +426,75 @@ inline void InstanceData::Destroy(napi_env env) {
 
 inline napi_ref InstanceData::GetConstructor(const char* name) {
   return ctors[name];
+}
+
+// static
+template <typename T>
+napi_status Wrapping<T>::Create(napi_env env,
+                                napi_value js_rcv,
+                                T* cc_rcv,
+                                size_t same_obj_count) {
+  Wrapping<T>* wrapping = new Wrapping<T>;
+  wrapping->native = cc_rcv;
+  if (same_obj_count > 0)
+    wrapping->refs.resize(same_obj_count, nullptr);
+  return napi_wrap(env, js_rcv, wrapping, Destroy, nullptr, nullptr);
+}
+
+// static
+template <typename T>
+napi_status Wrapping<T>::Retrieve(napi_env env,
+                                  napi_value js_rcv,
+                                  T** cc_rcv,
+                                  int ref_idx,
+                                  napi_value* ref,
+                                  Wrapping<T>** get_wrapping) {
+  void* data = nullptr;
+
+  napi_status status = napi_unwrap(env, js_rcv, &data);
+  if (status != napi_ok) return status;
+
+  Wrapping<T>*wrapping = static_cast<Wrapping<T>*>(data);
+
+  if (ref_idx >= 0 &&
+      ref_idx < wrapping->refs.size() &&
+      wrapping->refs[ref_idx] != nullptr) {
+    napi_value ref_value = nullptr;
+
+    status = napi_get_reference_value(env, wrapping->refs[ref_idx], &ref_value);
+    if (status != napi_ok) return status;
+
+    if (ref != nullptr) *ref = ref_value;
+  }
+
+  if (get_wrapping != nullptr) *get_wrapping = wrapping;
+  *cc_rcv = wrapping->native;
+  return napi_ok;
+}
+
+template <typename T>
+inline napi_status
+Wrapping<T>::SetRef(napi_env env, int idx, napi_value same_obj) {
+  napi_ref ref;
+
+  napi_status status = napi_create_reference(env, same_obj, 1, &ref);
+  if (status != napi_ok) return status;
+
+  refs[idx] = ref;
+  return napi_ok;
+}
+
+// static
+template <typename T>
+void Wrapping<T>::Destroy(napi_env env, void* data, void* hint) {
+  (void) hint;
+  Wrapping<T>* wrapping = static_cast<Wrapping<T>*>(data);
+
+  for (napi_ref ref: wrapping->refs)
+    if (ref != nullptr)
+      NAPI_CALL_RETURN_VOID(env, napi_delete_reference(env, ref));
+  delete wrapping->native;
+  delete wrapping;
 }
 
 }  // end of namespace WebIdlNapi

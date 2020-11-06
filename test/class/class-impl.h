@@ -6,6 +6,11 @@
 typedef struct value__* Value;
 class Incrementor;
 
+struct Properties {
+  DOMString name;
+  unsigned long count;
+};
+
 class Decrementor {
  public:
   void operator=(const Decrementor& other);
@@ -23,6 +28,10 @@ class Incrementor {
   Incrementor(unsigned long initial);
   Incrementor(DOMString initial);
   unsigned long increment();
+
+  Properties props;
+  Properties settableProps;
+
   Decrementor getDecrementor();
   friend class Decrementor;
   ~Incrementor();
