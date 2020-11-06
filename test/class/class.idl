@@ -3,10 +3,17 @@ interface Decrementor {
   unsigned long decrement();
 };
 
+dictionary Properties {
+  DOMString name;
+  unsigned long count;
+};
+
 interface Incrementor {
   constructor();
   constructor(unsigned long initial);
   constructor(DOMString initial);
   unsigned long increment();
   Decrementor getDecrementor();
+  [SameObject] readonly attribute Properties props;
+  attribute Properties settableProps;
 };

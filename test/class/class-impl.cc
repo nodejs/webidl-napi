@@ -32,7 +32,7 @@ Incrementor::Incrementor(): Incrementor(0) {}
 Incrementor::Incrementor(DOMString initial_value)
     : Incrementor(std::stoul(initial_value)) {}
 
-Incrementor::Incrementor(unsigned long initial_value) {
+Incrementor::Incrementor(unsigned long initial_value): props{"blah", 42} {
   val = new value__(initial_value);
   val->val = initial_value;
 }
