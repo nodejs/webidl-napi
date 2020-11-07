@@ -116,15 +116,6 @@ function generateNativeType(idlType) {
     : `WebIdlNapi::${idlType.generic}<${idlType.idlType[0].idlType}>`);
 }
 
-function generateConverter(idlType) {
-  // If it's a templated type, like `Promise<Something>`, use `::` for the
-  // converter, otherwise use `WebIdlNapi::Converter<type>::`.
-  const ret = ((typeof idlType.idlType === 'object' && !!idlType.generic)
-    ? `${generateNativeType(idlType)}`
-    : `WebIdlNapi::Converter<${generateNativeType(idlType)}>`);
-  return ret;
-}
-
 function generateInitializerList(list, indent) {
   indent = indent || '';
   return (Array.isArray(list)
@@ -226,7 +217,7 @@ function generateDictionaryMaps(dict) {
     `        &js_member);`,
     `    if (status != napi_ok) return status;`,
     ``,
-    `    status = ${generateConverter(member.idlType)}::ToNative(`,
+    `    status = WebIdlNapi::Converter<${generateNativeType(member.idlType)}>::ToNative(`,
     `        env,`,
     `        js_member,`,
     `        &(result->${member.name}));`,
@@ -251,7 +242,7 @@ function generateDictionaryMaps(dict) {
   // Create a statement that converts from the native type of the native member
   // to a `napi_value`, stored in `js_prop_0`, ...
   ...dict.members.reduce((soFar, member, idx) => soFar.concat([
-    `  status = ${generateConverter(member.idlType)}::ToJS(`,
+    `  status = WebIdlNapi::Converter<${generateNativeType(member.idlType)}>::ToJS(`,
     `      env,`,
     `      val.${member.name},`,
     `      &js_prop_${idx});`,
@@ -377,7 +368,7 @@ function generateCall(ifname, sig, indent, sameObjAttrCount) {
     return [
       `NAPI_CALL(`,
       `    env,`,
-      `    ${generateConverter(idlType)}::ToNative(`,
+      `    WebIdlNapi::Converter<${generateNativeType(idlType)}>::ToNative(`,
       `        env,`,
       `        argv[${index}],`,
       `        &native_arg_${index}));`,
@@ -529,7 +520,7 @@ function generateIfaceOperation(ifname, opname, sigs, sameObjAttrCount) {
     ...(hasReturn ? [
       `  NAPI_CALL(`,
       `      env,`,
-      `      ${generateConverter(retType)}::ToJS(`,
+      `      WebIdlNapi::Converter<${generateNativeType(retType)}>::ToJS(`,
       `          env,`,
       `          ret,`,
       `          &js_ret));`,
@@ -539,86 +530,10 @@ function generateIfaceOperation(ifname, opname, sigs, sameObjAttrCount) {
   ].join('\n');
 }
 
-function generateIfaceAttribute(ifname, attribute, sameObjIdx) {
-  const nativeAttributeType = generateNativeType(attribute.idlType);
-  function generateAccessor(slug) {
-    return [
-      `static napi_value`,
-      `webidl_napi_interface_${ifname}_${slug}_${attribute.name}(`,
-      `    napi_env env,`,
-      `    napi_callback_info info) {`,
-      `  napi_value js_rcv;`,
-      `  napi_value result = nullptr;`,
-      ...(slug === 'set' ? [
-        `  napi_value js_new;`,
-        `  size_t argc = 1;`,
-      ] : []),
-      `  NAPI_CALL(env,`,
-      `      napi_get_cb_info(env,`,
-      `          info,`,
-      ...(slug === 'set' ? [
-        `          &argc,`,
-        `          &js_new,`,
-      ] : [
-        `          nullptr,`,
-        `          nullptr,`,
-      ]),
-      `          &js_rcv,`,
-      `          nullptr));`,
-      ``,
-      `  ${ifname}* cc_rcv;`,
-      ...((sameObjIdx >= 0 && slug === 'get') ? [
-        `  WebIdlNapi::Wrapping<${ifname}>* wrapping;`,
-        `  NAPI_CALL(env,`,
-        `      WebIdlNapi::Wrapping<${ifname}>::Retrieve(`,
-        `        env,`,
-        `        js_rcv,`,
-        `        &cc_rcv,`,
-        `        ${sameObjIdx},`,
-        `        &result,`,
-        `        &wrapping));`,
-        `  if (result != nullptr) return result;`
-      ] : [
-        `  NAPI_CALL(env,`,
-        `      WebIdlNapi::Wrapping<${ifname}>::Retrieve(`,
-        `        env,`,
-        `        js_rcv,`,
-        `        &cc_rcv));`,
-      ]),
-      ``,
-      ...(slug === 'set' ? [
-        `  NAPI_CALL(`,
-        `      env,`,
-        `      ${generateConverter(attribute.idlType)}::ToNative(`,
-        `          env,`,
-        `          js_new,`,
-        `          &(cc_rcv->${attribute.name})));`,
-      ] : [
-        `  NAPI_CALL(`,
-        `      env,`,
-        `      ${generateConverter(attribute.idlType)}::ToJS(`,
-        `          env,`,
-        `          cc_rcv->${attribute.name},`,
-        `          &result));`,
-        ...((sameObjIdx >= 0 && slug === 'get') ? [
-          `  NAPI_CALL(env, wrapping->SetRef(env, ${sameObjIdx}, result));`,
-        ] : [])
-      ]),
-      `  return result;`,
-      `}`,
-    ];
-  }
-  return [
-    ...generateAccessor('get'),
-    ...(attribute.readonly ? [] : [
-      ``,
-      ...generateAccessor('set')
-    ]),
-  ].join('\n');
-}
+function generateIfaceInit(ifname, ops, attrs, sameObjAttrs) {
+  const propCount =
+    Object.keys(ops).length + attrs.length + sameObjAttrs.length;
 
-function generateIfaceInit(ifname, ops, attributes) {
-  const propCount = Object.keys(ops).length + attributes.length;
   return [
     // Generate the init method that defines the JS class.
     `static napi_status`,
@@ -648,18 +563,22 @@ function generateIfaceInit(ifname, ops, attributes) {
             ].join(' | ') + ')',
             `nullptr`
           ])),
-        ...attributes.map((attribute) => ([
-          `"${attribute.name}"`,
-          `nullptr`,
-          `nullptr`,
-          `webidl_napi_interface_${ifname}_get_${attribute.name}`,
-          (attribute.readonly
-            ? `nullptr`
-            : `webidl_napi_interface_${ifname}_set_${attribute.name}`),
-          `nullptr`,
-          `static_cast<napi_property_attributes>(napi_enumerable)`,
-          `nullptr`
-        ]))
+        ...attrs.map((attribute) => ([
+          `WebIdlNapi::Wrapping<${ifname}>::InstanceAccessor<`,
+          `          ${generateNativeType(attribute.idlType)},`,
+          `          &${ifname}::${attribute.name},`,
+          `          napi_property_attributes::napi_enumerable,`,
+          `          -1,`,
+          `          ${attribute.readonly}>("${attribute.name}")`
+        ].join('\n'))),
+        ...sameObjAttrs.map((attribute, index) => ([
+          `WebIdlNapi::Wrapping<${ifname}>::InstanceAccessor<`,
+          `          ${generateNativeType(attribute.idlType)},`,
+          `          &${ifname}::${attribute.name},`,
+          `          napi_property_attributes::napi_enumerable,`,
+          `          ${index},`,
+          `          ${attribute.readonly}>("${attribute.name}")`
+        ].join('\n')))
       ], '    ') + ';',
       ] : []),
     ``,
@@ -780,10 +699,7 @@ function generateIface(iface) {
       sameObjAttrs.length),
     ...Object.entries(collapsedOps).map(([opname, sigs]) =>
       generateIfaceOperation(iface.name, opname, sigs)),
-    ...attrs.map((item) => generateIfaceAttribute(iface.name, item)),
-    ...sameObjAttrs.map((item, idx) =>
-      generateIfaceAttribute(iface.name, item, idx)),
-    generateIfaceInit(iface.name, collapsedOps, [...attrs, ...sameObjAttrs])
+    generateIfaceInit(iface.name, collapsedOps, attrs, sameObjAttrs)
   ].join('\n\n');
 }
 

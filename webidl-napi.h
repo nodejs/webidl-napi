@@ -114,6 +114,16 @@ class Promise {
 };
 
 template <typename T>
+class Converter<Promise<T>> {
+ public:
+  static napi_status
+  ToJS(napi_env env, const Promise<T>& promise, napi_value* result);
+
+  static napi_status
+  ToNative(napi_env env, napi_value val, Promise<T>* result);
+};
+
+template <typename T>
 class sequence : public std::vector<T> {
  public:
   static napi_status
@@ -123,9 +133,27 @@ class sequence : public std::vector<T> {
 };
 
 template <typename T>
+class Converter<sequence<T>> {
+ public:
+  static napi_status
+  ToJS(napi_env env, const sequence<T>& seq, napi_value* result);
+  static napi_status
+  ToNative(napi_env env, napi_value val, sequence<T>* result);
+};
+
+template <typename T>
 class FrozenArray : public std::vector<T> {
  public:
   FrozenArray(std::initializer_list<T> lst);
+  static napi_status
+  ToJS(napi_env env, const FrozenArray<T>& seq, napi_value* result);
+  static napi_status
+  ToNative(napi_env env, napi_value val, FrozenArray<T>* result);
+};
+
+template <typename T>
+class Converter<FrozenArray<T>> {
+ public:
   static napi_status
   ToJS(napi_env env, const FrozenArray<T>& seq, napi_value* result);
   static napi_status
@@ -161,11 +189,24 @@ class Wrapping {
                               int ref_idx = -1,
                               napi_value* ref = nullptr,
                               Wrapping<T>** wrapping = nullptr);
+  template <typename FieldType,
+            FieldType T::*FieldName,
+            napi_property_attributes attributes,
+            int sameObjId,
+            bool readonly>
+  static napi_property_descriptor InstanceAccessor(const char* utf8name);
+
   napi_status SetRef(napi_env env, int idx, napi_value same_obj);
  private:
   static void Destroy(napi_env env, void* data, void* hint);
   T* native = nullptr;
   std::vector<napi_ref> refs;
+
+  template <typename FieldType, FieldType T::*FieldName, int sameIdx>
+  static napi_value InstanceGetter(napi_env env, napi_callback_info info);
+
+  template <typename FieldType, FieldType T::*FieldName>
+  static napi_value InstanceSetter(napi_env env, napi_callback_info info);
 };
 
 }  // end of namespace WebIdlNapi
