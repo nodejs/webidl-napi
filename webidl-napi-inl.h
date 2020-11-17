@@ -54,7 +54,7 @@ static inline napi_status
 ArrayToNative(napi_env env, napi_value ar, ArrayType* result) {
   napi_status status;
   napi_handle_scope scope;
-  ArrayType res;
+  ArrayType res{};
   uint32_t size;
 
   status = napi_open_handle_scope(env, &scope);
@@ -339,6 +339,20 @@ inline napi_status Promise<T>::ToJS(napi_env env,
 }
 
 template <typename T>
+inline napi_status Converter<Promise<T>>::ToJS(napi_env env,
+                                               const Promise<T>& promise,
+                                               napi_value* result) {
+  return Promise<T>::ToJS(env, promise, result);
+}
+
+template <typename T>
+inline napi_status Converter<Promise<T>>::ToNative(napi_env env,
+                                                   napi_value val,
+                                                   Promise<T>* result) {
+  return Promise<T>::ToJS(env, val, result);
+}
+
+template <typename T>
 inline napi_status
 sequence<T>::ToJS(napi_env env, const sequence<T>& seq, napi_value* result) {
   return details::ArrayToJS<sequence<T>, T, false>(env, seq, result);
@@ -348,6 +362,22 @@ template <typename T>
 inline napi_status
 sequence<T>::ToNative(napi_env env, napi_value val, sequence<T>* result) {
   return details::ArrayToNative<sequence<T>, T>(env, val, result);
+}
+
+template <typename T>
+inline napi_status
+Converter<sequence<T>>::ToJS(napi_env env,
+                             const sequence<T>& val,
+                             napi_value* result) {
+  return sequence<T>::ToJS(env, val, result);
+}
+
+template <typename T>
+inline napi_status
+Converter<sequence<T>>::ToNative(napi_env env,
+                                 napi_value val,
+                                 sequence<T>* result) {
+  return sequence<T>::ToNative(env, val, result);
 }
 
 template <typename T>
@@ -364,6 +394,22 @@ template <typename T>
 inline napi_status
 FrozenArray<T>::ToNative(napi_env env, napi_value val, FrozenArray<T>* result) {
   return details::ArrayToNative<FrozenArray<T>, T>(env, val, result);
+}
+
+template <typename T>
+inline napi_status
+Converter<FrozenArray<T>>::ToJS(napi_env env,
+                                const FrozenArray<T>& val,
+                                napi_value* result) {
+  return FrozenArray<T>::ToJS(env, val, result);
+}
+
+template <typename T>
+inline napi_status
+Converter<FrozenArray<T>>::ToNative(napi_env env,
+                                    napi_value val,
+                                    FrozenArray<T>* result) {
+  return FrozenArray<T>::ToNative(env, val, result);
 }
 
 // We assume that we are in control of the instance data for this add-on. Even
@@ -495,6 +541,70 @@ void Wrapping<T>::Destroy(napi_env env, void* data, void* hint) {
       NAPI_CALL_RETURN_VOID(env, napi_delete_reference(env, ref));
   delete wrapping->native;
   delete wrapping;
+}
+
+template <typename T>
+template <typename FieldType,
+          FieldType T::*FieldName,
+          napi_property_attributes attributes,
+          int sameObjId,
+          bool readonly>
+napi_property_descriptor Wrapping<T>::InstanceAccessor(const char* utf8name) {
+  napi_property_descriptor desc = napi_property_descriptor();
+
+  desc.utf8name = utf8name;
+  desc.getter = &Wrapping<T>::InstanceGetter<FieldType, FieldName, sameObjId>;
+  if (!readonly)
+    desc.setter = &Wrapping<T>::InstanceSetter<FieldType, FieldName>;
+  desc.attributes = attributes;
+
+  return desc;
+}
+
+template <typename T>
+template <typename FieldType, FieldType T::*FieldName, int sameIdx>
+napi_value Wrapping<T>::InstanceGetter(napi_env env, napi_callback_info info) {
+  napi_value js_rcv;
+  napi_value result = nullptr;
+  Wrapping<T>* wrapping;
+  T* cc_rcv;
+
+  NAPI_CALL(env,
+            napi_get_cb_info(env, info, nullptr, nullptr, &js_rcv, nullptr));
+
+  if (sameIdx >= 0) {
+    NAPI_CALL(env, Wrapping<T>::Retrieve(env,
+                                         js_rcv,
+                                         &cc_rcv,
+                                         sameIdx,
+                                         &result,
+                                         &wrapping));
+    if (result != nullptr) return result;
+  } else {
+    NAPI_CALL(env, Wrapping<T>::Retrieve(env, js_rcv, &cc_rcv));
+  }
+
+  NAPI_CALL(env, Converter<FieldType>::ToJS(env, cc_rcv->*FieldName, &result));
+
+  if (sameIdx >= 0) NAPI_CALL(env, wrapping->SetRef(env, sameIdx, result));
+
+  return result;
+}
+
+template <typename T>
+template <typename FieldType, FieldType T::*FieldName>
+napi_value Wrapping<T>::InstanceSetter(napi_env env, napi_callback_info info) {
+  napi_value js_rcv;
+  napi_value js_new;
+  size_t argc = 1;
+  T* cc_rcv;
+
+  NAPI_CALL(env, napi_get_cb_info(env, info, &argc, &js_new, &js_rcv, nullptr));
+  NAPI_CALL(env, Wrapping<T>::Retrieve(env, js_rcv, &cc_rcv));
+  NAPI_CALL(env,
+            Converter<FieldType>::ToNative(env, js_new, &(cc_rcv->*FieldName)));
+
+  return nullptr;
 }
 
 }  // end of namespace WebIdlNapi
